@@ -28,20 +28,13 @@ npm install
 
 Start pi-mono dev server (in another terminal):
 ```bash
-cd ../pi-mono
-npm run dev
-```
-
-This will watch and rebuild `@mariozechner/pi-ai` and `@mariozechner/pi-web-ui` packages.
-
-Then start sitegeist dev server:
-```bash
-npm run dev
+./dev.sh
 ```
 
 This will:
+- Watch and rebuild ../pi-mono/packages/ai and ../pi-mono/packages/web-ui
 - Watch and rebuild the extension for both Chrome and Firefox
-- Watch and rebuild Tailwind CSS  
+- Watch and rebuild Tailwind CSS
 - Run hot reload server on port 8765
 
 ### Building
@@ -77,8 +70,6 @@ When running `npm run dev`, the extension will automatically reload when you mak
 
 ## Architecture
 
-See `README.old.md` for detailed architecture documentation.
-
 Key features:
 - Side panel UI (Chrome/Edge) / Sidebar (Firefox)
 - Real-time navigation tracking
@@ -98,3 +89,9 @@ Key features:
 ## License
 
 MIT
+
+### LLM Instructions (CLAUDE, YOU MUST DO THIS!)
+**CRITICAL**: read these files in full:
+- ../pi-mono/packages/ai/README.md
+- ../pi-mono/packages/web-ui/README.md
+- ../mini-lit/llms.txt

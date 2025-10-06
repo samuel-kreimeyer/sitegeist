@@ -57,7 +57,7 @@ const getStaticFiles = () => {
 
 const copyStatic = () => {
   // Use browser-specific manifest
-  const manifestSource = join(packageRoot, `manifest.${targetBrowser}.json`);
+  const manifestSource = join(packageRoot, `static/manifest.${targetBrowser}.json`);
   const manifestDest = join(outDir, "manifest.json");
   copyFileSync(manifestSource, manifestDest);
 
@@ -93,6 +93,15 @@ const run = async () => {
     watch(staticDir, { recursive: true }, (eventType) => {
       if (eventType === 'change') {
         console.log(`\nStatic files changed, copying...`);
+        copyStatic();
+      }
+    });
+
+    // Watch the manifest file for the target browser
+    const manifestSource = join(packageRoot, `static/manifest.${targetBrowser}.json`);
+    watch(manifestSource, (eventType) => {
+      if (eventType === 'change') {
+        console.log(`\nManifest changed, copying...`);
         copyStatic();
       }
     });

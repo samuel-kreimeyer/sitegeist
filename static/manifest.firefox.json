@@ -37,7 +37,8 @@
     "activeTab",
     "https://*/*",
     "http://localhost/*",
-    "http://127.0.0.1/*"
+    "http://127.0.0.1/*",
+    "userScripts"
   ],
   "browser_specific_settings": {
     "gecko": {

@@ -21,7 +21,7 @@ import {
 import { html, render } from "lit";
 import { History, Plus, Settings } from "lucide";
 import { browserMessageTransformer } from "./message-transformer.js";
-import { createNavigationMessage, registerNavigationRenderer } from "./messages/NavigationMessage.js";
+import { createNavigationMessage, type NavigationMessage, registerNavigationRenderer } from "./messages/NavigationMessage.js";
 import { browserJavaScriptTool } from "./tools/index.js";
 import "./utils/live-reload.js";
 
@@ -295,21 +295,21 @@ const renderApp = () => {
 // TAB NAVIGATION TRACKING
 // ============================================================================
 
-// Listen for tab updates and insert navigation messages immediately
+// Listen for tab updates and insert navigation messages only when agent is running
 chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
-	// Only care about URL changes on the active tab
+	// Only care about URL changes on the active tab while agent is working
 	// Ignore chrome-extension:// URLs (extension internal pages)
-	if (changeInfo.url && tab.active && tab.url && agent && !tab.url.startsWith("chrome-extension://")) {
+	if (changeInfo.url && tab.active && tab.url && agent?.state.isStreaming && !tab.url.startsWith("chrome-extension://")) {
 		const navMessage = createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.index);
 		agent.appendMessage(navMessage);
 	}
 });
 
-// Listen for tab activation (user switches tabs)
+// Listen for tab activation (user switches tabs) only when agent is running
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
 	const tab = await chrome.tabs.get(activeInfo.tabId);
 	// Ignore chrome-extension:// URLs (extension internal pages)
-	if (tab.url && agent && !tab.url.startsWith("chrome-extension://")) {
+	if (tab.url && agent?.state.isStreaming && !tab.url.startsWith("chrome-extension://")) {
 		const navMessage = createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.index);
 		agent.appendMessage(navMessage);
 	}
@@ -340,6 +340,28 @@ async function initApp() {
 	chatPanel.sandboxUrlProvider = getSandboxUrl;
 	chatPanel.onApiKeyRequired = async (provider: string) => {
 		return await ApiKeyPromptDialog.prompt(provider);
+	};
+	chatPanel.onBeforeSend = async () => {
+		if (!agent) return;
+
+		// Get current tab info
+		const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+		if (!tab?.url || tab.url.startsWith("chrome-extension://")) return;
+
+		// Find most recent navigation message (reverse iteration for compatibility)
+		let lastNav: NavigationMessage | undefined;
+		for (let i = agent.state.messages.length - 1; i >= 0; i--) {
+			if (agent.state.messages[i].role === "navigation") {
+				lastNav = agent.state.messages[i] as NavigationMessage;
+				break;
+			}
+		}
+
+		// Only add if URL changed
+		if (!lastNav || lastNav.url !== tab.url) {
+			const navMessage = createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.index);
+			agent.appendMessage(navMessage);
+		}
 	};
 	chatPanel.additionalTools = [browserJavaScriptTool];
 
