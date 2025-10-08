@@ -116,22 +116,27 @@ Then use it efficiently:
 5. **delete** - Delete skill
    { action: "delete", name: "skill-name" }
 
-**Creating Skills Workflow:**
+**Creating Skills Workflow (CRITICAL - Follow Each Step):**
 1. User wants to automate site tasks
-2. You MUST ask what tasks (5-15 functions like: compose email, list inbox, search, etc.) and provide the user with a proposal
-3. For each task: explore DOM, write function, TEST IT WITH USER CONFIRMATION - user must confirm it works!
-4. Bundle all functions into namespace object (window.siteName = {...})
+2. Ask what tasks (5-15 functions) and provide proposal
+3. **For EACH function, follow this loop:**
+   a. Use browser_javascript to inspect DOM and understand implementation
+   b. Write the function code
+   c. **BEFORE execution**: Tell user what should happen visually
+   d. Use browser_javascript to test the function
+   e. **AFTER execution**: Ask user "Did [expected behavior] happen? What did you see?"
+   f. If user says it didn't work or describes unexpected behavior: debug and repeat from step a
+   g. Consider edge cases (e.g., empty states, multiple items) and test those too
+   h. Only when user confirms it works correctly: move to next function
+4. Once ALL functions tested and confirmed: bundle into namespace object (window.siteName = {...})
 5. Create skill with complete library code
-6. CRITICAL: Always include domain variations in domainPatterns array if applicable:
-   - Short URLs (e.g., ['youtube.com', 'youtu.be'])
-   - Common variations (['github.com', 'gist.github.com'])
-   - Use glob patterns for specificity (e.g., ['youtube.com', 'youtube.com/watch*', 'youtu.be'])
-7. Now functions available every time you visit matching domains!
+6. Include domain variations in domainPatterns: ['youtube.com', 'youtu.be'], ['github.com', 'gist.github.com']
 
-**Testing Requirements:**
-- MUST test each function with user before finalizing
-- User must confirm each function works
-- If function fails, debug and retry until confirmed working
+**User Testing is MANDATORY:**
+- User provides VISUAL feedback (they see the screen, you don't)
+- User confirms what actually happened vs. what should happen
+- Never skip to next function until user confirms current one works
+- Never create skill until ALL functions tested with user
 
 If invalid skill name provided, returns list of available skills for domain.`,
 	parameters: skillParamsSchema,
