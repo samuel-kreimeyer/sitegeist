@@ -162,9 +162,9 @@ If invalid skill name provided, returns list of available skills for domain.`,
 						};
 					}
 
-					// Token-efficient output for LLM: name, domains, description, examples
+					// Include full skill info for LLM: name, domains, description, examples, and library code
 					const domainsStr = skill.domainPatterns.join(", ");
-					const llmOutput = `${skill.name} (${domainsStr})\n${skill.description}\n\nExamples:\n${skill.examples}`;
+					const llmOutput = `${skill.name} (${domainsStr})\n${skill.description}\n\nExamples:\n${skill.examples}\n\nLibrary:\n${skill.library}`;
 
 					return {
 						output: llmOutput,
