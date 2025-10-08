@@ -226,86 +226,175 @@ export class IndexedDBStorageBackend implements StorageBackend {
 }
 ```
 
-### Repository Pattern
+### Store Pattern
 
-Repositories handle domain logic, backend handles storage:
+Each store defines its own schema (StoreConfig) and handles domain logic:
 
 ```typescript
-// packages/web-ui/src/storage/sessions-repository.ts
+// packages/web-ui/src/storage/store.ts
 
-export class SessionsRepository {
-  constructor(private backend: StorageBackend) {}
+export abstract class Store {
+  private backend: StorageBackend | null = null;
 
-  async saveSession(data: SessionData, metadata: SessionMetadata): Promise<void> {
-    await this.backend.transaction(
-      ['sessions-metadata', 'sessions-data'],
-      'readwrite',
-      async (tx) => {
-        await tx.set('sessions-metadata', metadata.id, metadata);
-        await tx.set('sessions-data', data.id, data);
-      }
-    );
+  /**
+   * Returns the IndexedDB configuration for this store.
+   * Defines store name, key path, and indices.
+   */
+  abstract getConfig(): StoreConfig;
+
+  /**
+   * Sets the storage backend. Called by AppStorage after backend creation.
+   */
+  setBackend(backend: StorageBackend): void {
+    this.backend = backend;
   }
 
-  async getSession(id: string): Promise<SessionData | null> {
-    return this.backend.get('sessions-data', id);
-  }
-
-  async getMetadata(id: string): Promise<SessionMetadata | null> {
-    return this.backend.get('sessions-metadata', id);
-  }
-
-  async getAllMetadata(): Promise<SessionMetadata[]> {
-    const keys = await this.backend.keys('sessions-metadata');
-    const metadata = await Promise.all(
-      keys.map(key => this.backend.get<SessionMetadata>('sessions-metadata', key))
-    );
-    return metadata.filter((m): m is SessionMetadata => m !== null);
-  }
-
-  async deleteSession(id: string): Promise<void> {
-    await this.backend.transaction(
-      ['sessions-metadata', 'sessions-data'],
-      'readwrite',
-      async (tx) => {
-        await tx.delete('sessions-metadata', id);
-        await tx.delete('sessions-data', id);
-      }
-    );
-  }
-
-  async updateTitle(id: string, title: string): Promise<void> {
-    const metadata = await this.getMetadata(id);
-    if (metadata) {
-      metadata.title = title;
-      await this.backend.set('sessions-metadata', id, metadata);
+  /**
+   * Gets the storage backend. Throws if backend not set.
+   * Concrete stores must use this to access the backend.
+   */
+  protected getBackend(): StorageBackend {
+    if (!this.backend) {
+      throw new Error(`Backend not set on ${this.constructor.name}`);
     }
+    return this.backend;
   }
 }
 ```
 
 ```typescript
-// src/storage/skills-repository.ts (sitegeist)
+// packages/web-ui/src/storage/stores/settings-store.ts
 
-export class SkillsRepository {
-  constructor(private backend: StorageBackend) {}
-
-  async getSkill(name: string): Promise<Skill | null> {
-    return this.backend.get('skills', name);
+export class SettingsStore extends Store {
+  getConfig(): StoreConfig {
+    return {
+      name: 'settings',
+      // No keyPath - uses out-of-line keys
+    };
   }
 
-  async saveSkill(skill: Skill): Promise<void> {
-    await this.backend.set('skills', skill.name, skill);
+  async get<T>(key: string): Promise<T | null> {
+    return this.getBackend().get('settings', key);
   }
 
-  async deleteSkill(name: string): Promise<void> {
-    await this.backend.delete('skills', name);
+  async set<T>(key: string, value: T): Promise<void> {
+    await this.getBackend().set('settings', key, value);
   }
 
-  async listSkills(): Promise<Skill[]> {
-    const keys = await this.backend.keys('skills');
+  async delete(key: string): Promise<void> {
+    await this.getBackend().delete('settings', key);
+  }
+
+  async list(): Promise<string[]> {
+    return this.getBackend().keys('settings');
+  }
+}
+```
+
+```typescript
+// packages/web-ui/src/storage/stores/provider-keys-store.ts
+
+export class ProviderKeysStore extends Store {
+  getConfig(): StoreConfig {
+    return {
+      name: 'provider-keys',
+    };
+  }
+
+  async get(provider: string): Promise<string | null> {
+    return this.getBackend().get('provider-keys', provider);
+  }
+
+  async set(provider: string, key: string): Promise<void> {
+    await this.getBackend().set('provider-keys', provider, key);
+  }
+
+  async delete(provider: string): Promise<void> {
+    await this.getBackend().delete('provider-keys', provider);
+  }
+
+  async list(): Promise<string[]> {
+    return this.getBackend().keys('provider-keys');
+  }
+}
+```
+
+```typescript
+// packages/web-ui/src/storage/stores/sessions-store.ts
+
+export class SessionsStore extends Store {
+  getConfig(): StoreConfig {
+    return {
+      name: 'sessions',
+      keyPath: 'id',
+      indices: [
+        { name: 'lastModified', keyPath: 'lastModified' }
+      ]
+    };
+  }
+
+  async save(data: SessionData, metadata: SessionMetadata): Promise<void> {
+    await this.getBackend().transaction(
+      ['sessions', 'sessions-metadata'],
+      'readwrite',
+      async (tx) => {
+        await tx.set('sessions', data.id, data);
+        await tx.set('sessions-metadata', metadata.id, metadata);
+      }
+    );
+  }
+
+  async get(id: string): Promise<SessionData | null> {
+    return this.getBackend().get('sessions', id);
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.getBackend().transaction(
+      ['sessions', 'sessions-metadata'],
+      'readwrite',
+      async (tx) => {
+        await tx.delete('sessions', id);
+        await tx.delete('sessions-metadata', id);
+      }
+    );
+  }
+
+  async getAllMetadata(): Promise<SessionMetadata[]> {
+    const keys = await this.getBackend().keys('sessions-metadata');
+    const metadata = await Promise.all(
+      keys.map(key => this.getBackend().get<SessionMetadata>('sessions-metadata', key))
+    );
+    return metadata.filter((m): m is SessionMetadata => m !== null);
+  }
+}
+```
+
+```typescript
+// src/storage/stores/skills-store.ts (sitegeist)
+
+export class SkillsStore extends Store {
+  getConfig(): StoreConfig {
+    return {
+      name: 'skills',
+    };
+  }
+
+  async get(name: string): Promise<Skill | null> {
+    return this.getBackend().get('skills', name);
+  }
+
+  async save(skill: Skill): Promise<void> {
+    await this.getBackend().set('skills', skill.name, skill);
+  }
+
+  async delete(name: string): Promise<void> {
+    await this.getBackend().delete('skills', name);
+  }
+
+  async list(): Promise<Skill[]> {
+    const keys = await this.getBackend().keys('skills');
     const skills = await Promise.all(
-      keys.map(key => this.backend.get<Skill>('skills', key))
+      keys.map(key => this.getBackend().get<Skill>('skills', key))
     );
     return skills.filter((s): s is Skill => s !== null);
   }
@@ -313,36 +402,40 @@ export class SkillsRepository {
 ```
 
 ```typescript
-// src/storage/memories-repository.ts (sitegeist)
+// src/storage/stores/memories-store.ts (sitegeist)
 
-export class MemoriesRepository {
-  constructor(private backend: StorageBackend) {}
+export class MemoriesStore extends Store {
+  getConfig(): StoreConfig {
+    return {
+      name: 'memories',
+    };
+  }
 
   private makeKey(sessionId: string, key: string): string {
     return `${sessionId}_${key}`;
   }
 
   async get(sessionId: string, key: string): Promise<unknown | null> {
-    return this.backend.get('memories', this.makeKey(sessionId, key));
+    return this.getBackend().get('memories', this.makeKey(sessionId, key));
   }
 
   async set(sessionId: string, key: string, value: unknown): Promise<void> {
-    await this.backend.set('memories', this.makeKey(sessionId, key), value);
+    await this.getBackend().set('memories', this.makeKey(sessionId, key), value);
   }
 
   async delete(sessionId: string, key: string): Promise<void> {
-    await this.backend.delete('memories', this.makeKey(sessionId, key));
+    await this.getBackend().delete('memories', this.makeKey(sessionId, key));
   }
 
   async keys(sessionId: string): Promise<string[]> {
     const prefix = `${sessionId}_`;
-    const allKeys = await this.backend.keys('memories', prefix);
+    const allKeys = await this.getBackend().keys('memories', prefix);
     return allKeys.map(k => k.substring(prefix.length));
   }
 
   async clear(sessionId: string): Promise<void> {
     const keys = await this.keys(sessionId);
-    await this.backend.transaction(['memories'], 'readwrite', async (tx) => {
+    await this.getBackend().transaction(['memories'], 'readwrite', async (tx) => {
       for (const key of keys) {
         await tx.delete('memories', this.makeKey(sessionId, key));
       }
@@ -353,37 +446,37 @@ export class MemoriesRepository {
 
 ### AppStorage Wiring
 
+AppStorage creates stores, gathers their configs, creates the backend, and wires everything together:
+
 ```typescript
 // packages/web-ui/src/storage/app-storage.ts
 
-export class BaseAppStorage {
+export class AppStorage {
   readonly backend: StorageBackend;
-  readonly sessions: SessionsRepository;
+  readonly settings: SettingsStore;
+  readonly providerKeys: ProviderKeysStore;
+  readonly sessions: SessionsStore;
 
-  constructor(backend: StorageBackend) {
-    this.backend = backend;
-    this.sessions = new SessionsRepository(backend);
-  }
+  constructor(
+    settings: SettingsStore,
+    providerKeys: ProviderKeysStore,
+    sessions: SessionsStore
+  ) {
+    this.settings = settings;
+    this.providerKeys = providerKeys;
+    this.sessions = sessions;
 
-  // Settings/keys access backend directly
-  async getSetting<T>(key: string): Promise<T | null> {
-    return this.backend.get('settings', key);
-  }
-
-  async setSetting<T>(key: string, value: T): Promise<void> {
-    await this.backend.set('settings', key, value);
-  }
-
-  async getProviderKey(provider: string): Promise<string | null> {
-    return this.backend.get('provider-keys', provider);
-  }
-
-  async setProviderKey(provider: string, key: string): Promise<void> {
-    await this.backend.set('provider-keys', provider, key);
+    // Backend is already set on stores by subclass
+    // This constructor is just for storing references
+    this.backend = settings.getBackend();
   }
 
   async getQuotaInfo() {
     return this.backend.getQuotaInfo();
+  }
+
+  async requestPersistence() {
+    return this.backend.requestPersistence();
   }
 }
 ```
@@ -391,37 +484,63 @@ export class BaseAppStorage {
 ```typescript
 // src/storage/app-storage.ts (sitegeist)
 
-export class SitegeistAppStorage extends BaseAppStorage {
-  readonly skills: SkillsRepository;
-  readonly memories: MemoriesRepository;
+export class SitegeistAppStorage extends AppStorage {
+  readonly memories: MemoriesStore;
+  readonly skills: SkillsStore;
+  readonly prompts: PromptsStore;
 
   constructor() {
+    // 1. Create all stores (no backend yet)
+    const settings = new SettingsStore();
+    const providerKeys = new ProviderKeysStore();
+    const sessions = new SessionsStore();
+    const memories = new MemoriesStore();
+    const skills = new SkillsStore();
+    const prompts = new PromptsStore();
+
+    // 2. Gather configs from all stores
+    const configs = [
+      settings.getConfig(),
+      providerKeys.getConfig(),
+      sessions.getConfig(),
+      memories.getConfig(),
+      skills.getConfig(),
+      prompts.getConfig(),
+    ];
+
+    // 3. Create backend with all configs
     const backend = new IndexedDBStorageBackend({
       dbName: 'sitegeist-storage',
       version: 1,
-      stores: [
-        // Core stores (web-ui)
-        { name: 'sessions-metadata', keyPath: 'id', indices: [
-          { name: 'lastModified', keyPath: 'lastModified' }
-        ]},
-        { name: 'sessions-data', keyPath: 'id' },
-        { name: 'settings' },
-        { name: 'provider-keys' },
-
-        // Sitegeist stores
-        { name: 'memories' },
-        { name: 'skills' },
-        { name: 'user-prompts' }
-      ]
+      stores: configs,
     });
 
-    super(backend);
+    // 4. Wire backend to all stores
+    settings.setBackend(backend);
+    providerKeys.setBackend(backend);
+    sessions.setBackend(backend);
+    memories.setBackend(backend);
+    skills.setBackend(backend);
+    prompts.setBackend(backend);
 
-    this.skills = new SkillsRepository(backend);
-    this.memories = new MemoriesRepository(backend);
+    // 5. Pass base stores to parent
+    super(settings, providerKeys, sessions);
+
+    // 6. Store references to sitegeist-specific stores
+    this.memories = memories;
+    this.skills = skills;
+    this.prompts = prompts;
   }
 }
 ```
+
+### Key Benefits of Store Pattern
+
+1. **Each store owns its schema** - No central configuration file
+2. **No circular dependencies** - Stores created first, backend second
+3. **Type-safe** - Each store has domain-specific methods
+4. **Extensible** - Subclasses just add more stores
+5. **Testable** - Can mock `StorageBackend` interface
 
 ### Future: Remote Backend
 
