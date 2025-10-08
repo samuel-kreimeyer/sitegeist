@@ -1,12 +1,13 @@
-import { html, type TemplateResult } from "@mariozechner/mini-lit";
+import { html, i18n, type TemplateResult } from "@mariozechner/mini-lit";
 import type { AgentTool, ToolResultMessage } from "@mariozechner/pi-ai";
-import { type Attachment, i18n, registerToolRenderer, renderCollapsibleHeader, renderHeader, type ToolRenderer } from "@mariozechner/pi-web-ui";
+import { type Attachment, registerToolRenderer, renderCollapsibleHeader, renderHeader, type ToolRenderer } from "@mariozechner/pi-web-ui";
 import { createRef } from "lit/directives/ref.js";
 import { ref } from "lit/directives/ref.js";
 import { type Static, Type } from "@sinclair/typebox";
 import "@mariozechner/pi-web-ui"; // Ensure all components are registered
 import { Globe } from "lucide";
 import { getSitegeistStorage } from "../storage/app-storage.js";
+import "../utils/i18n-extension.js";
 
 // Cross-browser API compatibility
 // @ts-expect-error - browser global exists in Firefox, chrome in Chrome

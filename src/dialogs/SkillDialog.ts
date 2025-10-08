@@ -1,9 +1,8 @@
-import { DialogBase, html, icon } from "@mariozechner/mini-lit";
+import { DialogBase, html, i18n, icon } from "@mariozechner/mini-lit";
 import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
-import type { Skill } from "../storage/stores/skills-store.js";
-import { DomainPill } from "../components/DomainPill.js";
-import { i18n } from "@mariozechner/pi-web-ui";
 import { Sparkles } from "lucide";
+import { DomainPill } from "../components/DomainPill.js";
+import type { Skill } from "../storage/stores/skills-store.js";
 
 export class SkillDialog extends DialogBase {
 	private skill: Skill | null = null;

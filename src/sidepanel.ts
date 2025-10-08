@@ -268,7 +268,9 @@ const renderApp = () => {
 										type: "text",
 										value: currentTitle,
 										className: "text-sm w-48",
-										onChange: async (e: Event) => {
+										/*
+										TODO need to add this in Input in mini-lit
+										onBlur: async (e: Event) => {
 											const newTitle = (e.target as HTMLInputElement).value.trim();
 											if (newTitle && newTitle !== currentTitle && storage.sessions && currentSessionId) {
 												await storage.sessions.updateTitle(currentSessionId, newTitle);
@@ -276,7 +278,7 @@ const renderApp = () => {
 											}
 											isEditingTitle = false;
 											renderApp();
-										},
+										},*/
 										onKeyDown: async (e: KeyboardEvent) => {
 											if (e.key === "Enter") {
 												const newTitle = (e.target as HTMLInputElement).value.trim();

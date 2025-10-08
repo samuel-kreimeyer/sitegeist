@@ -1,13 +1,13 @@
-import { html, icon, type TemplateResult } from "@mariozechner/mini-lit";
+import { html, i18n, icon, type TemplateResult } from "@mariozechner/mini-lit";
 import "@mariozechner/mini-lit/dist/MarkdownBlock.js";
-import { StringEnum, type AgentTool, type ToolResultMessage } from "@mariozechner/pi-ai";
-import { registerToolRenderer, type ToolRenderer, SandboxIframe, renderHeader, i18n } from "@mariozechner/pi-web-ui";
-import { Type, type Static } from "@sinclair/typebox";
+import { type AgentTool, StringEnum, type ToolResultMessage } from "@mariozechner/pi-ai";
+import { registerToolRenderer, renderHeader, SandboxIframe, type ToolRenderer } from "@mariozechner/pi-web-ui";
+import { type Static, Type } from "@sinclair/typebox";
 import { Sparkles } from "lucide";
 import { DomainPill } from "../components/DomainPill.js";
 import { SkillPill } from "../components/SkillPill.js";
-import type { Skill } from "../storage/stores/skills-store.js";
 import { getSitegeistStorage } from "../storage/app-storage.js";
+import type { Skill } from "../storage/stores/skills-store.js";
 
 // Cross-browser API
 // @ts-expect-error

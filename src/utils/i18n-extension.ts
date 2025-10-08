@@ -29,6 +29,11 @@ declare module "@mariozechner/mini-lit" {
 		"Examples": string;
 		"Library": string;
 		"Command failed:": string;
+		"Why is this needed?": string;
+		"What this means:": string;
+		"Continue Anyway": string;
+		"Requesting...": string;
+		"Grant Permission": string;
 	}
 }
 
@@ -65,6 +70,11 @@ const sitegeistTranslations = {
 		"Examples": "Examples",
 		"Library": "Library",
 		"Command failed:": "Command failed:",
+		"Why is this needed?": "Why is this needed?",
+		"What this means:": "What this means:",
+		"Continue Anyway": "Continue Anyway",
+		"Requesting...": "Requesting...",
+		"Grant Permission": "Grant Permission",
 	},
 	de: {
 		"Permission request failed": "Berechtigungsanfrage fehlgeschlagen",
@@ -99,6 +109,11 @@ const sitegeistTranslations = {
 		"Examples": "Beispiele",
 		"Library": "Bibliothek",
 		"Command failed:": "Befehl fehlgeschlagen:",
+		"Why is this needed?": "Warum ist das notwendig?",
+		"What this means:": "Was das bedeutet:",
+		"Continue Anyway": "Trotzdem fortfahren",
+		"Requesting...": "Anfrage läuft...",
+		"Grant Permission": "Berechtigung erteilen",
 	},
 };
 
