@@ -815,8 +815,9 @@ This ensures reliable execution.`,
 				return true; // Indicates we'll send a response asynchronously
 			};
 
-			// Register the listener
-			browser.runtime.onMessage.addListener(artifactMessageListener);
+			// Register listener for user script messages
+			// User scripts use runtime.sendMessage() which triggers onUserScriptMessage, not onMessage
+			browser.runtime.onUserScriptMessage.addListener(artifactMessageListener);
 
 			let results: any[];
 
@@ -1018,7 +1019,7 @@ Track Firefox implementation: https://bugzilla.mozilla.org/show_bug.cgi?id=19307
 				};
 			} finally {
 				// Clean up the message listener
-				browser.runtime.onMessage.removeListener(artifactMessageListener);
+				browser.runtime.onUserScriptMessage.removeListener(artifactMessageListener);
 			}
 		} catch (error: unknown) {
 			const err = error as Error;
