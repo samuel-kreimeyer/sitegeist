@@ -411,6 +411,9 @@ window.addEventListener("keydown", (e) => {
 // INIT
 // ============================================================================
 async function initApp() {
+	const startTime = performance.now();
+	console.log('[Init] Starting sidepanel initialization');
+
 	// Show loading
 	render(
 		html`
@@ -420,6 +423,7 @@ async function initApp() {
 		`,
 		document.body,
 	);
+	console.log(`[Init] Rendered loading screen (+${(performance.now() - startTime).toFixed(1)}ms)`);
 
 	// Request persistent storage
 	// if (storage.sessions) {
@@ -427,14 +431,18 @@ async function initApp() {
 	// }
 
 	// Request userScripts permission if not available
+	const permCheckStart = performance.now();
 	// @ts-expect-error - browser global exists in Firefox, chrome in Chrome
 	const browserAPIForPermissions = globalThis.browser || globalThis.chrome;
 	if (!browserAPIForPermissions.userScripts) {
 		await UserScriptsPermissionDialog.request();
 	}
+	console.log(`[Init] Permission check (+${(performance.now() - permCheckStart).toFixed(1)}ms)`);
 
 	// Create ChatPanel
+	const chatPanelStart = performance.now();
 	chatPanel = new ChatPanel();
+	console.log(`[Init] Created ChatPanel (+${(performance.now() - chatPanelStart).toFixed(1)}ms)`);
 
 	// Check for session in URL
 	const urlParams = new URLSearchParams(window.location.search);
@@ -443,7 +451,9 @@ async function initApp() {
 
 	// If no session in URL and not explicitly creating new, try to load the most recent session
 	if (!sessionIdFromUrl && !isNewSession && storage.sessions) {
+		const getLatestStart = performance.now();
 		const latestSessionId = await storage.sessions.getLatestSessionId();
+		console.log(`[Init] Got latest session ID (+${(performance.now() - getLatestStart).toFixed(1)}ms)`);
 		if (latestSessionId) {
 			sessionIdFromUrl = latestSessionId;
 			// Update URL to include the latest session
@@ -452,12 +462,18 @@ async function initApp() {
 	}
 
 	if (sessionIdFromUrl && storage.sessions) {
+		const loadSessionStart = performance.now();
 		const sessionData = await storage.sessions.loadSession(sessionIdFromUrl);
+		console.log(`[Init] Loaded session data (+${(performance.now() - loadSessionStart).toFixed(1)}ms)`);
+
 		if (sessionData) {
 			currentSessionId = sessionIdFromUrl;
+			const metadataStart = performance.now();
 			const metadata = await storage.sessions.getMetadata(sessionIdFromUrl);
 			currentTitle = metadata?.title || "";
+			console.log(`[Init] Got session metadata (+${(performance.now() - metadataStart).toFixed(1)}ms)`);
 
+			const createAgentStart = performance.now();
 			await createAgent({
 				systemPrompt,
 				model: sessionData.model,
@@ -465,19 +481,30 @@ async function initApp() {
 				messages: sessionData.messages,
 				tools: [],
 			});
+			console.log(`[Init] Created agent with session (+${(performance.now() - createAgentStart).toFixed(1)}ms)`);
 
+			const renderStart = performance.now();
 			renderApp();
+			console.log(`[Init] Rendered app (+${(performance.now() - renderStart).toFixed(1)}ms)`);
+			console.log(`[Init] TOTAL TIME: ${(performance.now() - startTime).toFixed(1)}ms`);
 			return;
 		} else {
 			// Session doesn't exist, redirect to new session
+			console.log('[Init] Session not found, creating new session');
 			newSession();
 			return;
 		}
 	}
 
 	// No session - create new agent
+	const createAgentStart = performance.now();
 	await createAgent();
+	console.log(`[Init] Created new agent (+${(performance.now() - createAgentStart).toFixed(1)}ms)`);
+
+	const renderStart = performance.now();
 	renderApp();
+	console.log(`[Init] Rendered app (+${(performance.now() - renderStart).toFixed(1)}ms)`);
+	console.log(`[Init] TOTAL TIME: ${(performance.now() - startTime).toFixed(1)}ms`);
 }
 
 initApp();
