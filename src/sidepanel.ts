@@ -20,7 +20,8 @@ import { html, render } from "lit";
 import { History, Plus, Settings } from "lucide";
 import { browserMessageTransformer } from "./message-transformer.js";
 import { createNavigationMessage, type NavigationMessage, registerNavigationRenderer } from "./messages/NavigationMessage.js";
-import { browserJavaScriptTool, skillTool, requestUserScriptsPermission } from "./tools/index.js";
+import { SYSTEM_PROMPT } from "./prompts/tool-prompts.js";
+import { BrowserJavaScriptTool, skillTool, requestUserScriptsPermission } from "./tools/index.js";
 import { UserScriptsPermissionDialog } from "./dialogs/UserScriptsPermissionDialog.js";
 import { SkillsTab } from "./dialogs/SkillsTab.js";
 import "./utils/i18n-extension.js";
@@ -38,55 +39,7 @@ const getSandboxUrl = () => {
 	return browserAPI.runtime.getURL("sandbox.html");
 };
 
-const systemPrompt = `
-You are a helpful AI assistant embedded in a browser.
-
-Tools available:
-- Read/modify active tab via JavaScript and browser APIs
-- Create artifacts (files) for user
-- Manage site-specific skills - reusable JS libraries for token-efficient domain automation
-- Other user-added tools
-
-ALWAYS use tools when appropriate, especially for page interaction.
-
-## Site Skills - ESSENTIAL for Token Efficiency
-
-Skills are small, reusable JavaScript libraries that make your work TOKEN-EFFICIENT. Instead of analyzing the DOM and writing similar code repeatedly, create a skill ONCE and reuse it.
-
-### Why Skills Matter
-- **Token savings**: Write "gmailUtils.sendEmail()" instead of exploring DOM every time
-- **Speed**: Instant access to tested functions for common tasks
-- **Consistency**: Same reliable code every visit
-
-### Common Skill Functions
-- Gmail: sendEmail(), listEmails(), readCurrentEmail(), reply(), archive()
-- Slack: collectMessages(), sendMessage()
-- GitHub: createIssue(), listPulls(), commentOnPR()
-- Generic: scrapeTable(), fillForm(), clickButton()
-
-### Using Skills
-When you visit a domain with a skill:
-- Functions are auto-loaded in browser_javascript context
-- Check available skills: skill({ action: "list" })
-- View documentation: skill({ action: "get", name: "skill-name" })
-- Use directly: gmailUtils.sendEmail({...})
-
-### Creating Skills (CRITICAL Process)
-When user wants to automate a site:
-1. **Identify tasks**: Ask what they want (5-15 functions)
-2. **Test EACH function with user (MANDATORY)**:
-   - Inspect DOM with browser_javascript
-   - Write function code
-   - Tell user what SHOULD happen visually
-   - Execute test with browser_javascript
-   - Ask user: "Did that work? What did you see?"
-   - If broken/wrong: debug and retry
-   - Test edge cases
-   - Only proceed when user confirms it works
-3. **Create skill**: Once ALL functions tested and confirmed by user
-4. **Done**: Tested functions available every visit
-
-USER SEES THE SCREEN - YOU DON'T. Their visual confirmation is essential. Never create skill until user confirms each function works.
+const systemPrompt = SYSTEM_PROMPT + `
 
 ### Suggesting Skills
 If you write similar browser_javascript code 3+ times for same domain, suggest:
@@ -209,7 +162,38 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 		}
 	});
 
-	await chatPanel.setAgent(agent);
+	await chatPanel.setAgent(agent, {
+		sandboxUrlProvider: getSandboxUrl,
+		onApiKeyRequired: async (provider: string) => {
+			return await ApiKeyPromptDialog.prompt(provider);
+		},
+		onBeforeSend: async () => {
+			if (!agent) return;
+
+			// Get current tab info
+			const [tab] = await browserAPI.tabs.query({ active: true, currentWindow: true });
+			if (!tab?.url || tab.url.startsWith("chrome-extension://") || tab.url.startsWith("moz-extension://")) return;
+
+			// Find most recent navigation message (reverse iteration for compatibility)
+			let lastNav: NavigationMessage | undefined;
+			for (let i = agent.state.messages.length - 1; i >= 0; i--) {
+				if (agent.state.messages[i].role === "navigation") {
+					lastNav = agent.state.messages[i] as NavigationMessage;
+					break;
+				}
+			}
+
+			// Only add if URL changed
+			if (!lastNav || lastNav.url !== tab.url) {
+				const navMessage = createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.index);
+				agent.appendMessage(navMessage);
+			}
+		},
+		toolsFactory: (agent, agentInterface, artifactsPanel) => {
+			const browserJavaScriptTool = new BrowserJavaScriptTool(artifactsPanel, agent);
+			return [browserJavaScriptTool, skillTool];
+		}
+	});
 };
 
 const loadSession = (sessionId: string) => {
@@ -387,34 +371,6 @@ async function initApp() {
 
 	// Create ChatPanel
 	chatPanel = new ChatPanel();
-	chatPanel.sandboxUrlProvider = getSandboxUrl;
-	chatPanel.onApiKeyRequired = async (provider: string) => {
-		return await ApiKeyPromptDialog.prompt(provider);
-	};
-
-	chatPanel.onBeforeSend = async () => {
-		if (!agent) return;
-
-		// Get current tab info
-		const [tab] = await browserAPI.tabs.query({ active: true, currentWindow: true });
-		if (!tab?.url || tab.url.startsWith("chrome-extension://") || tab.url.startsWith("moz-extension://")) return;
-
-		// Find most recent navigation message (reverse iteration for compatibility)
-		let lastNav: NavigationMessage | undefined;
-		for (let i = agent.state.messages.length - 1; i >= 0; i--) {
-			if (agent.state.messages[i].role === "navigation") {
-				lastNav = agent.state.messages[i] as NavigationMessage;
-				break;
-			}
-		}
-
-		// Only add if URL changed
-		if (!lastNav || lastNav.url !== tab.url) {
-			const navMessage = createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.index);
-			agent.appendMessage(navMessage);
-		}
-	};
-	chatPanel.additionalTools = [browserJavaScriptTool, skillTool];
 
 	// Check for session in URL
 	const urlParams = new URLSearchParams(window.location.search);

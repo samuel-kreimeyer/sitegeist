@@ -5,6 +5,7 @@ import { registerToolRenderer, renderHeader, SandboxIframe, type ToolRenderer } 
 import { type Static, Type } from "@sinclair/typebox";
 import { Sparkles } from "lucide";
 import { DomainPill } from "../components/DomainPill.js";
+import { SKILL_TOOL_DESCRIPTION } from "../prompts/tool-prompts.js";
 import { SkillPill } from "../components/SkillPill.js";
 import { getSitegeistStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
@@ -74,77 +75,7 @@ type SkillParams = Static<typeof skillParamsSchema>;
 export const skillTool: AgentTool<typeof skillParamsSchema, any> = {
 	label: "Skill Management",
 	name: "skill",
-	description: `Manage site skills - reusable JavaScript libraries for token-efficient automation.
-
-**Why Skills Matter:**
-Skills are small, domain-specific libraries you write ONCE and reuse via browser_javascript. Instead of repeatedly analyzing DOM and writing similar code, create a skill with common functions (e.g., "compose email", "list inbox", "send Slack message"). This is ESSENTIAL for token efficiency and faster workflows.
-
-**What Skills Do:**
-- Auto-inject into browser_javascript execution context when domain matches
-- Provide reusable functions for common tasks on a site
-- Save tokens by avoiding repetitive DOM exploration
-
-**Example - Gmail Skill:**
-Instead of writing code to compose email every time, create a skill once:
-
-{
-  action: "create",
-  data: {
-    name: "gmail-basics",
-    domainPatterns: ["mail.google.com"],
-    shortDescription: "Gmail email operations",
-    description: "Send emails, read inbox, reply. Functions: sendEmail({to, subject, body}), listEmails(), readCurrentEmail(), reply(message), archive(), delete()",
-    examples: "// Send email\\nawait window.gmail.sendEmail({to: 'test@example.com', subject: 'Hi', body: 'Hello!'})\\n\\n// List inbox\\nconst emails = window.gmail.listEmails()\\n\\n// Reply\\nawait window.gmail.reply('Thanks!')",
-    library: "window.gmail = {\\n  sendEmail: async function({to, subject, body}) { /* ... */ },\\n  listEmails: function() { /* ... */ },\\n  readCurrentEmail: function() { /* ... */ },\\n  reply: async function(msg) { /* ... */ },\\n  archive: function() { /* ... */ },\\n  delete: function() { /* ... */ }\\n}"
-  }
-}
-
-Then use it efficiently:
-- gmail.sendEmail({to: 'user@example.com', subject: 'Test', body: 'Hi'})
-- gmail.listEmails()
-
-**Actions:**
-
-1. **get** - View skill description and examples
-   { action: "get", name: "gmail-basics" }
-
-2. **list** - List skills
-   { action: "list" } - Lists skills for current tab URL
-   { action: "list", url: "https://example.com" } - Lists skills for specific URL
-   { action: "list", url: "" } - Lists ALL skills (no filtering)
-
-3. **create** - Create new skill
-   { action: "create", data: { name, domainPatterns, shortDescription, description, examples, library } }
-
-4. **update** - Update skill (merges fields)
-   { action: "update", name: "skill-name", data: { library: "..." } }
-
-5. **delete** - Delete skill
-   { action: "delete", name: "skill-name" }
-
-**Creating Skills Workflow (CRITICAL - Follow Each Step):**
-1. User wants to automate site tasks
-2. Ask what tasks (5-15 functions) and provide proposal
-3. **For EACH function, follow this loop:**
-   a. Use browser_javascript to inspect DOM and understand implementation
-   b. Write the function code
-   c. **BEFORE execution**: Tell user what should happen visually
-   d. Use browser_javascript to test the function
-   e. **AFTER execution**: Ask user "Did [expected behavior] happen? What did you see?"
-   f. If user says it didn't work or describes unexpected behavior: debug and repeat from step a
-   g. Consider edge cases (e.g., empty states, multiple items) and test those too
-   h. Only when user confirms it works correctly: move to next function
-4. Once ALL functions tested and confirmed: bundle into namespace object (window.siteName = {...})
-5. Create skill with complete library code
-6. Include domain variations in domainPatterns: ['youtube.com', 'youtu.be'], ['github.com', 'gist.github.com']
-
-**User Testing is MANDATORY:**
-- User provides VISUAL feedback (they see the screen, you don't)
-- User confirms what actually happened vs. what should happen
-- Never skip to next function until user confirms current one works
-- Never create skill until ALL functions tested with user
-
-If invalid skill name provided, returns list of available skills for domain.`,
+	description: SKILL_TOOL_DESCRIPTION,
 	parameters: skillParamsSchema,
 	execute: async (_toolCallId: string, args: SkillParams) => {
 		try {

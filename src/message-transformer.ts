@@ -80,6 +80,11 @@ export async function browserMessageTransformer(messages: AppMessage[]): Promise
 	const transformed = [];
 
 	for (const m of messages) {
+		// Filter out artifact messages - they're for session reconstruction only
+		if (m.role === "artifact") {
+			continue;
+		}
+
 		// Filter non-LLM messages
 		if (m.role !== "user" && m.role !== "assistant" && m.role !== "toolResult" && m.role !== "navigation") {
 			continue;
