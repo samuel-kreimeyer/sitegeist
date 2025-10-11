@@ -1,99 +1,54 @@
-# Storage Architecture Proposal
+# Storage Architecture
 
-## Current State Analysis
+## Status
 
-### Fragmented Storage Backends
+⚠️ **IMPLEMENTATION PLAN - NOT EXECUTED**
 
-The current storage implementation is fragmented across multiple backends and APIs:
+This document describes a comprehensive plan to unify storage architecture. Current implementation uses fragmented storage backends.
 
-1. **chrome.storage.local** (via `WebExtensionStorageBackend`)
-   - Used for: skills, settings, provider keys
-   - Limit: 10MB quota
-   - Location: `src/storage/app-storage.ts`
-   - Issue: Skills can be large (library code), approaching quota limits
+## Current Implementation
 
-2. **IndexedDB for Sessions** (`SessionIndexedDBBackend`)
-   - Database: `pi-extension-sessions`
-   - Object stores: `metadata`, `data`
-   - Used for: session data and metadata
-   - Location: `packages/web-ui/src/storage/backends/session-indexeddb-backend.ts`
+**chrome.storage.local** (via `WebExtensionStorageBackend`)
+- Skills, settings, provider keys
+- 10MB quota limit
+- Location: [src/storage/app-storage.ts](../src/storage/app-storage.ts)
 
-3. **Proposed Memories IndexedDB** (from `docs/memories.md`)
-   - Database: `sitegeist-memories`
-   - Would store: session-scoped key-value pairs for browser_javascript tool
-   - Status: Not yet implemented
+**IndexedDB Sessions** (`SessionIndexedDBBackend`)
+- Database: `pi-extension-sessions`
+- Session data and metadata
+- Location: [pi-mono/packages/web-ui/src/storage/backends/session-indexeddb-backend.ts](../../pi-mono/packages/web-ui/src/storage/backends/session-indexeddb-backend.ts)
 
-### Problems with Current Approach
+**Problems**:
+- 10MB chrome.storage.local limit insufficient for skills with library code
+- Multiple storage APIs (chrome.storage vs IndexedDB) create complexity
+- No unified quota tracking
+- Difficult to extend with new features
 
-1. **Quota Management Complexity**
-   - chrome.storage.local has strict 10MB limit
-   - Skills with large library code can hit this limit
-   - Multiple databases make quota tracking difficult
+## Proposed Solution
 
-2. **Multiple Storage APIs**
-   - Different patterns for chrome.storage vs IndexedDB
-   - More complex error handling and retry logic
-   - Inconsistent performance characteristics
+Single IndexedDB database `sitegeist-storage` with multiple object stores:
 
-3. **Scalability Issues**
-   - Adding new features (memories, user prompts) requires new databases
-   - No unified approach to storage architecture
-   - Increases complexity over time
+**Core stores** (web-ui):
+- `sessions-metadata` - Session listing and metadata
+- `sessions-data` - Full session content
+- `settings` - Application settings
+- `provider-keys` - API keys for LLM providers
 
-## Proposed Unified Architecture
+**Extension stores** (sitegeist):
+- `memories` - Session-scoped key-value pairs
+- `skills` - Skill definitions with library code
+- `user-prompts` - User prompt templates
 
-### Single IndexedDB Database
+**Benefits**:
+- **Quota**: 10GB+ vs 10MB (60% disk on Chrome, 50% on Firefox, 1GB+ on Safari)
+- **Consistency**: Single API, unified transactions
+- **Performance**: Optimized for structured data, efficient queries
+- **Atomic operations**: Multi-store transactions
+- **Extensibility**: Add stores without creating databases
 
-Use a single IndexedDB database: `sitegeist-storage`
+## Architecture
 
-**Object Stores:**
-
-```typescript
-// Core stores (managed by web-ui)
-- sessions-metadata: Session listing and metadata
-- sessions-data: Full session content
-- settings: Application settings
-- provider-keys: API keys for LLM providers
-
-// Domain-specific stores (managed by sitegeist)
-- memories: Session-scoped key-value pairs (key: `${sessionId}_${key}`)
-- skills: Skill definitions with library code (key: skill name)
-- user-prompts: Prebaked user prompts (future feature)
-```
-
-### Benefits
-
-1. **Unified Quota Management**
-   - Single quota pool with massive capacity (typically 10GB+ on modern systems)
-   - Chrome/Edge: Up to 60% of available disk space
-   - Firefox: Up to 50% of available disk space
-   - Safari: Starts at 1GB, can request more
-   - Far superior to chrome.storage.local's hard 10MB limit
-   - Easier to track and report total usage
-
-2. **Consistent API**
-   - All storage operations use IndexedDB
-   - Single transaction model
-   - Unified error handling
-
-3. **Performance**
-   - IndexedDB is optimized for structured data
-   - Efficient querying with indices
-   - Better for large objects (skills with library code)
-
-4. **Atomic Operations**
-   - Transactions can span multiple object stores
-   - Example: Update skill and related settings atomically
-
-5. **Extensibility**
-   - Easy to add new object stores for future features
-   - No need to create new databases
-
-## Simplified Architecture
-
-### Single Storage Interface
-
-One interface that works everywhere (web, extension, future remote):
+### StorageBackend Interface
 
 ```typescript
 // packages/web-ui/src/storage/types.ts
@@ -126,11 +81,9 @@ export interface StorageTransaction {
 }
 ```
 
-### IndexedDB Implementation (Web-UI)
+### IndexedDB Backend
 
 ```typescript
-// packages/web-ui/src/storage/backends/indexeddb-storage-backend.ts
-
 export interface IndexedDBConfig {
   dbName: string;
   version: number;
@@ -144,604 +97,198 @@ export interface StoreConfig {
 }
 
 export class IndexedDBStorageBackend implements StorageBackend {
-  private dbPromise: Promise<IDBDatabase> | null = null;
-
   constructor(private config: IndexedDBConfig) {}
 
-  private async getDB(): Promise<IDBDatabase> {
-    if (!this.dbPromise) {
-      this.dbPromise = new Promise((resolve, reject) => {
-        const request = indexedDB.open(this.config.dbName, this.config.version);
-
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result);
-
-        request.onupgradeneeded = (event) => {
-          const db = request.result;
-
-          // Create object stores from config
-          for (const storeConfig of this.config.stores) {
-            if (!db.objectStoreNames.contains(storeConfig.name)) {
-              const store = db.createObjectStore(storeConfig.name, {
-                keyPath: storeConfig.keyPath
-              });
-
-              // Create indices
-              if (storeConfig.indices) {
-                for (const index of storeConfig.indices) {
-                  store.createIndex(index.name, index.keyPath);
-                }
-              }
-            }
-          }
-        };
-      });
-    }
-
-    return this.dbPromise;
-  }
-
-  async get<T>(storeName: string, key: string): Promise<T | null> {
-    const db = await this.getDB();
-    const tx = db.transaction(storeName, 'readonly');
-    const store = tx.objectStore(storeName);
-    const result = await this.promisifyRequest(store.get(key));
-    return result ?? null;
-  }
-
-  async set<T>(storeName: string, key: string, value: T): Promise<void> {
-    const db = await this.getDB();
-    const tx = db.transaction(storeName, 'readwrite');
-    const store = tx.objectStore(storeName);
-    await this.promisifyRequest(store.put(value, key));
-  }
-
-  async transaction<T>(
-    storeNames: string[],
-    mode: 'readonly' | 'readwrite',
-    operation: (tx: StorageTransaction) => Promise<T>
-  ): Promise<T> {
-    const db = await this.getDB();
-    const idbTx = db.transaction(storeNames, mode);
-
-    const storageTx: StorageTransaction = {
-      get: async (storeName, key) => {
-        const store = idbTx.objectStore(storeName);
-        return await this.promisifyRequest(store.get(key)) ?? null;
-      },
-      set: async (storeName, key, value) => {
-        const store = idbTx.objectStore(storeName);
-        await this.promisifyRequest(store.put(value, key));
-      },
-      delete: async (storeName, key) => {
-        const store = idbTx.objectStore(storeName);
-        await this.promisifyRequest(store.delete(key));
-      }
-    };
-
-    return operation(storageTx);
-  }
-
-  // ... other methods (delete, keys, clear, has, getQuotaInfo, requestPersistence)
+  // Lazy database initialization with onupgradeneeded
+  // Implements get, set, delete, keys, transaction, quota methods
 }
 ```
 
 ### Store Pattern
 
-Each store defines its own schema (StoreConfig) and handles domain logic:
+Each store extends base class, provides config, and implements domain-specific methods:
 
 ```typescript
-// packages/web-ui/src/storage/store.ts
-
 export abstract class Store {
   private backend: StorageBackend | null = null;
 
-  /**
-   * Returns the IndexedDB configuration for this store.
-   * Defines store name, key path, and indices.
-   */
   abstract getConfig(): StoreConfig;
-
-  /**
-   * Sets the storage backend. Called by AppStorage after backend creation.
-   */
-  setBackend(backend: StorageBackend): void {
-    this.backend = backend;
-  }
-
-  /**
-   * Gets the storage backend. Throws if backend not set.
-   * Concrete stores must use this to access the backend.
-   */
-  protected getBackend(): StorageBackend {
-    if (!this.backend) {
-      throw new Error(`Backend not set on ${this.constructor.name}`);
-    }
-    return this.backend;
-  }
+  setBackend(backend: StorageBackend): void { /* ... */ }
+  protected getBackend(): StorageBackend { /* ... */ }
 }
 ```
 
-```typescript
-// packages/web-ui/src/storage/stores/settings-store.ts
+**Example stores**:
 
+```typescript
+// SettingsStore - Key-value settings
 export class SettingsStore extends Store {
-  getConfig(): StoreConfig {
-    return {
-      name: 'settings',
-      // No keyPath - uses out-of-line keys
-    };
-  }
-
-  async get<T>(key: string): Promise<T | null> {
-    return this.getBackend().get('settings', key);
-  }
-
-  async set<T>(key: string, value: T): Promise<void> {
-    await this.getBackend().set('settings', key, value);
-  }
-
-  async delete(key: string): Promise<void> {
-    await this.getBackend().delete('settings', key);
-  }
-
-  async list(): Promise<string[]> {
-    return this.getBackend().keys('settings');
-  }
+  getConfig() { return { name: 'settings' }; }
+  async get<T>(key: string): Promise<T | null> { /* ... */ }
+  async set<T>(key: string, value: T): Promise<void> { /* ... */ }
 }
-```
 
-```typescript
-// packages/web-ui/src/storage/stores/provider-keys-store.ts
-
-export class ProviderKeysStore extends Store {
-  getConfig(): StoreConfig {
-    return {
-      name: 'provider-keys',
-    };
-  }
-
-  async get(provider: string): Promise<string | null> {
-    return this.getBackend().get('provider-keys', provider);
-  }
-
-  async set(provider: string, key: string): Promise<void> {
-    await this.getBackend().set('provider-keys', provider, key);
-  }
-
-  async delete(provider: string): Promise<void> {
-    await this.getBackend().delete('provider-keys', provider);
-  }
-
-  async list(): Promise<string[]> {
-    return this.getBackend().keys('provider-keys');
-  }
-}
-```
-
-```typescript
-// packages/web-ui/src/storage/stores/sessions-store.ts
-
+// SessionsStore - Multi-store transactions
 export class SessionsStore extends Store {
-  getConfig(): StoreConfig {
+  getConfig() {
     return {
       name: 'sessions',
       keyPath: 'id',
-      indices: [
-        { name: 'lastModified', keyPath: 'lastModified' }
-      ]
+      indices: [{ name: 'lastModified', keyPath: 'lastModified' }]
     };
   }
 
   async save(data: SessionData, metadata: SessionMetadata): Promise<void> {
-    await this.getBackend().transaction(
-      ['sessions', 'sessions-metadata'],
-      'readwrite',
-      async (tx) => {
-        await tx.set('sessions', data.id, data);
-        await tx.set('sessions-metadata', metadata.id, metadata);
-      }
-    );
-  }
-
-  async get(id: string): Promise<SessionData | null> {
-    return this.getBackend().get('sessions', id);
-  }
-
-  async delete(id: string): Promise<void> {
-    await this.getBackend().transaction(
-      ['sessions', 'sessions-metadata'],
-      'readwrite',
-      async (tx) => {
-        await tx.delete('sessions', id);
-        await tx.delete('sessions-metadata', id);
-      }
-    );
-  }
-
-  async getAllMetadata(): Promise<SessionMetadata[]> {
-    const keys = await this.getBackend().keys('sessions-metadata');
-    const metadata = await Promise.all(
-      keys.map(key => this.getBackend().get<SessionMetadata>('sessions-metadata', key))
-    );
-    return metadata.filter((m): m is SessionMetadata => m !== null);
+    await this.getBackend().transaction(['sessions', 'sessions-metadata'], 'readwrite', async (tx) => {
+      await tx.set('sessions', data.id, data);
+      await tx.set('sessions-metadata', metadata.id, metadata);
+    });
   }
 }
-```
 
-```typescript
-// src/storage/stores/skills-store.ts (sitegeist)
-
-export class SkillsStore extends Store {
-  getConfig(): StoreConfig {
-    return {
-      name: 'skills',
-    };
-  }
-
-  async get(name: string): Promise<Skill | null> {
-    return this.getBackend().get('skills', name);
-  }
-
-  async save(skill: Skill): Promise<void> {
-    await this.getBackend().set('skills', skill.name, skill);
-  }
-
-  async delete(name: string): Promise<void> {
-    await this.getBackend().delete('skills', name);
-  }
-
-  async list(): Promise<Skill[]> {
-    const keys = await this.getBackend().keys('skills');
-    const skills = await Promise.all(
-      keys.map(key => this.getBackend().get<Skill>('skills', key))
-    );
-    return skills.filter((s): s is Skill => s !== null);
-  }
-}
-```
-
-```typescript
-// src/storage/stores/memories-store.ts (sitegeist)
-
+// MemoriesStore - Session-scoped keys
 export class MemoriesStore extends Store {
-  getConfig(): StoreConfig {
-    return {
-      name: 'memories',
-    };
-  }
+  getConfig() { return { name: 'memories' }; }
 
-  private makeKey(sessionId: string, key: string): string {
+  private makeKey(sessionId: string, key: string) {
     return `${sessionId}_${key}`;
   }
 
   async get(sessionId: string, key: string): Promise<unknown | null> {
     return this.getBackend().get('memories', this.makeKey(sessionId, key));
   }
-
-  async set(sessionId: string, key: string, value: unknown): Promise<void> {
-    await this.getBackend().set('memories', this.makeKey(sessionId, key), value);
-  }
-
-  async delete(sessionId: string, key: string): Promise<void> {
-    await this.getBackend().delete('memories', this.makeKey(sessionId, key));
-  }
-
-  async keys(sessionId: string): Promise<string[]> {
-    const prefix = `${sessionId}_`;
-    const allKeys = await this.getBackend().keys('memories', prefix);
-    return allKeys.map(k => k.substring(prefix.length));
-  }
-
-  async clear(sessionId: string): Promise<void> {
-    const keys = await this.keys(sessionId);
-    await this.getBackend().transaction(['memories'], 'readwrite', async (tx) => {
-      for (const key of keys) {
-        await tx.delete('memories', this.makeKey(sessionId, key));
-      }
-    });
-  }
 }
 ```
 
 ### AppStorage Wiring
 
-AppStorage creates stores, gathers their configs, creates the backend, and wires everything together:
-
 ```typescript
-// packages/web-ui/src/storage/app-storage.ts
-
+// Base (web-ui)
 export class AppStorage {
   readonly backend: StorageBackend;
   readonly settings: SettingsStore;
   readonly providerKeys: ProviderKeysStore;
   readonly sessions: SessionsStore;
 
-  constructor(
-    settings: SettingsStore,
-    providerKeys: ProviderKeysStore,
-    sessions: SessionsStore
-  ) {
-    this.settings = settings;
-    this.providerKeys = providerKeys;
-    this.sessions = sessions;
-
-    // Backend is already set on stores by subclass
-    // This constructor is just for storing references
-    this.backend = settings.getBackend();
-  }
-
-  async getQuotaInfo() {
-    return this.backend.getQuotaInfo();
-  }
-
-  async requestPersistence() {
-    return this.backend.requestPersistence();
+  constructor(settings: SettingsStore, providerKeys: ProviderKeysStore, sessions: SessionsStore) {
+    // Stores already have backend wired by subclass
   }
 }
-```
 
-```typescript
-// src/storage/app-storage.ts (sitegeist)
-
+// Extended (sitegeist)
 export class SitegeistAppStorage extends AppStorage {
   readonly memories: MemoriesStore;
   readonly skills: SkillsStore;
   readonly prompts: PromptsStore;
 
   constructor() {
-    // 1. Create all stores (no backend yet)
-    const settings = new SettingsStore();
-    const providerKeys = new ProviderKeysStore();
-    const sessions = new SessionsStore();
-    const memories = new MemoriesStore();
-    const skills = new SkillsStore();
-    const prompts = new PromptsStore();
-
-    // 2. Gather configs from all stores
-    const configs = [
-      settings.getConfig(),
-      providerKeys.getConfig(),
-      sessions.getConfig(),
-      memories.getConfig(),
-      skills.getConfig(),
-      prompts.getConfig(),
-    ];
-
+    // 1. Create stores
+    // 2. Gather configs
     // 3. Create backend with all configs
-    const backend = new IndexedDBStorageBackend({
-      dbName: 'sitegeist-storage',
-      version: 1,
-      stores: configs,
-    });
-
     // 4. Wire backend to all stores
-    settings.setBackend(backend);
-    providerKeys.setBackend(backend);
-    sessions.setBackend(backend);
-    memories.setBackend(backend);
-    skills.setBackend(backend);
-    prompts.setBackend(backend);
-
-    // 5. Pass base stores to parent
-    super(settings, providerKeys, sessions);
-
-    // 6. Store references to sitegeist-specific stores
-    this.memories = memories;
-    this.skills = skills;
-    this.prompts = prompts;
+    // 5. Call super with base stores
   }
 }
 ```
 
-### Key Benefits of Store Pattern
-
-1. **Each store owns its schema** - No central configuration file
-2. **No circular dependencies** - Stores created first, backend second
-3. **Type-safe** - Each store has domain-specific methods
-4. **Extensible** - Subclasses just add more stores
-5. **Testable** - Can mock `StorageBackend` interface
-
-### Future: Remote Backend
-
-Easy to add remote storage by implementing `StorageBackend`:
-
-```typescript
-export class RemoteStorageBackend implements StorageBackend {
-  constructor(private apiUrl: string) {}
-
-  async get<T>(storeName: string, key: string): Promise<T | null> {
-    const response = await fetch(`${this.apiUrl}/${storeName}/${key}`);
-    return response.ok ? response.json() : null;
-  }
-
-  async set<T>(storeName: string, key: string, value: T): Promise<void> {
-    await fetch(`${this.apiUrl}/${storeName}/${key}`, {
-      method: 'PUT',
-      body: JSON.stringify(value)
-    });
-  }
-
-  // ... other methods
-}
-```
-
-## Migration Strategy
-
-### Phase 1: Implement Unified Backend in Web-UI
-
-1. Create `UnifiedIndexedDBBackend` base class
-2. Create `SessionUnifiedBackend` implementing `SessionStorageBackend`
-3. Add configuration-based object store creation
-4. Maintain backward compatibility with existing `SessionIndexedDBBackend`
-
-### Phase 2: Extend in Sitegeist
-
-1. Create `SitegeistUnifiedBackend` extending `SessionUnifiedBackend`
-2. Add object stores: `memories`, `skills`, `user-prompts`
-3. Implement domain-specific operations
-
-### Phase 3: Migrate Data
-
-1. Create migration utility that:
-   - Reads all data from chrome.storage.local (skills, settings, keys)
-   - Reads session data from `pi-extension-sessions` IndexedDB
-   - Writes everything to new `sitegeist-storage` IndexedDB
-   - Verifies data integrity
-2. Run migration on extension update
-3. Keep old storage for one version as backup
-
-### Phase 4: Clean Up
-
-1. Remove `WebExtensionStorageBackend` usage
-2. Remove old `SessionIndexedDBBackend` in favor of unified backend
-3. Delete old `pi-extension-sessions` database
-4. Clear chrome.storage.local
+**Benefits**:
+- Each store owns its schema (no central config)
+- No circular dependencies
+- Type-safe domain-specific methods
+- Extensible via subclassing
+- Testable with mocked backend
 
 ## Implementation Details
 
 ### Object Store Keys
 
-```typescript
-// sessions-metadata
-key: sessionId
-value: { id, title, createdAt, lastModified, model }
+- `sessions-metadata`: `sessionId` → `{ id, title, createdAt, lastModified, model }`
+- `sessions-data`: `sessionId` → `{ id, messages, artifacts }`
+- `memories`: `${sessionId}_${key}` → JSON value
+- `skills`: `skillName` → `{ name, domainPatterns, description, library, ... }`
+- `settings`: `settingKey` → setting value
+- `provider-keys`: `providerName` → API key string
+- `user-prompts`: `promptId` → `{ id, name, prompt, tags, ... }`
 
-// sessions-data
-key: sessionId
-value: { id, messages, artifacts }
+### Prefix Queries (Memories)
 
-// memories
-key: `${sessionId}_${memoryKey}`
-value: any JSON-serializable value
-
-// skills
-key: skillName
-value: { name, domainPatterns, description, library, ... }
-
-// settings
-key: settingKey (e.g., "theme", "defaultModel")
-value: setting value
-
-// provider-keys
-key: providerName (e.g., "anthropic", "openai")
-value: API key string
-
-// user-prompts (future)
-key: promptId
-value: { id, name, prompt, tags, ... }
-```
-
-### Efficient Prefix Queries
-
-For memories, use `IDBKeyRange` for efficient session-scoped queries:
+Use `IDBKeyRange.bound()` for efficient session-scoped queries:
 
 ```typescript
-async listMemoryKeys(sessionId: string): Promise<string[]> {
-  const prefix = `${sessionId}_`;
-  const range = IDBKeyRange.bound(
-    prefix,
-    prefix + '\uffff', // High unicode character
-    false,
-    false
-  );
-
-  const db = await this.getDB();
-  const tx = db.transaction("memories", "readonly");
-  const store = tx.objectStore("memories");
-  const keys = await store.getAllKeys(range);
-
-  return keys.map(k => (k as string).substring(prefix.length));
-}
+const prefix = `${sessionId}_`;
+const range = IDBKeyRange.bound(prefix, prefix + '\uffff', false, false);
+const keys = await store.getAllKeys(range);
 ```
 
 ### Quota Management
 
 ```typescript
-async getQuotaInfo(): Promise<{ usage: number; quota: number; percent: number }> {
-  if (navigator.storage && navigator.storage.estimate) {
-    const estimate = await navigator.storage.estimate();
-    return {
-      usage: estimate.usage || 0,
-      quota: estimate.quota || 0,
-      percent: estimate.quota ? (estimate.usage! / estimate.quota) * 100 : 0
-    };
-  }
-  return { usage: 0, quota: 0, percent: 0 };
+async getQuotaInfo() {
+  const estimate = await navigator.storage.estimate();
+  return {
+    usage: estimate.usage || 0,
+    quota: estimate.quota || 0,
+    percent: (estimate.usage / estimate.quota) * 100
+  };
 }
 
-async requestPersistence(): Promise<boolean> {
-  if (navigator.storage && navigator.storage.persist) {
-    return await navigator.storage.persist();
-  }
-  return false;
+async requestPersistence() {
+  return await navigator.storage.persist();
 }
 ```
+
+## Migration Plan
+
+**Phase 1**: Implement unified backend in web-ui
+- Create `IndexedDBStorageBackend` with store pattern
+- Add configuration-based object store creation
+- Maintain backward compatibility
+
+**Phase 2**: Extend in sitegeist
+- Create `SitegeistAppStorage` extending base
+- Add stores: `memories`, `skills`, `user-prompts`
+
+**Phase 3**: Migrate data
+- Read from chrome.storage.local and `pi-extension-sessions`
+- Write to unified `sitegeist-storage`
+- Verify integrity, keep old storage as backup
+
+**Phase 4**: Clean up
+- Remove `WebExtensionStorageBackend`
+- Delete old database and chrome.storage.local data
 
 ## Future Extensions
 
-The unified architecture makes it easy to add new features:
-
-### User Prompts Store
-
+**User Prompts Store**:
 ```typescript
-export interface UserPrompt {
-  id: string;
-  name: string;
-  prompt: string;
-  tags: string[];
-  createdAt: string;
-  lastUsed?: string;
-}
-
-// Just add to object stores config:
-{
-  name: "user-prompts",
-  keyPath: "id",
-  indices: [
-    { name: "lastUsed", keyPath: "lastUsed" }
-  ]
-}
+{ name: "user-prompts", keyPath: "id", indices: [{ name: "lastUsed", keyPath: "lastUsed" }] }
 ```
 
-### Workspace Store (Multi-Project Support)
-
+**Workspaces** (multi-project support):
 ```typescript
-{
-  name: "workspaces",
-  keyPath: "id"
-}
-
-// Each workspace has its own set of sessions, skills, memories
+{ name: "workspaces", keyPath: "id" }
 ```
 
-### Export/Import
-
-With unified backend, export/import becomes trivial:
-
+**Export/Import**:
 ```typescript
-async exportAll(): Promise<ExportData> {
-  const db = await this.getDB();
-  const data: ExportData = {};
-
-  for (const storeName of this.config.objectStores.map(s => s.name)) {
-    const tx = db.transaction(storeName, "readonly");
-    const store = tx.objectStore(storeName);
+async exportAll() {
+  for (const storeName of this.config.stores.map(s => s.name)) {
     data[storeName] = await store.getAll();
   }
-
-  return data;
 }
 ```
 
-## Summary
+**Remote Backend**:
+```typescript
+export class RemoteStorageBackend implements StorageBackend {
+  async get(storeName: string, key: string) {
+    return fetch(`${apiUrl}/${storeName}/${key}`).then(r => r.json());
+  }
+}
+```
 
-The unified IndexedDB architecture provides:
+## Related Files
 
-1. **Simplicity**: Single database, consistent API
-2. **Scalability**: Easy to add new features as object stores
-3. **Performance**: Better quota limits, efficient queries
-4. **Maintainability**: Less code, fewer edge cases
-5. **Extensibility**: Clean separation between web-ui core and sitegeist extensions
-
-The migration path is straightforward and can be done incrementally without breaking existing functionality.
+- [docs/memories.md](memories.md) - Memory persistence API (blocked by this)
+- [pi-mono/packages/web-ui/src/storage/backends/session-indexeddb-backend.ts](../../pi-mono/packages/web-ui/src/storage/backends/session-indexeddb-backend.ts)
+- [src/storage/app-storage.ts](../src/storage/app-storage.ts)

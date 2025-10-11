@@ -1,103 +1,136 @@
-# Prompts Documentation
+# Prompts
 
-This document describes all prompts/descriptions used in Sitegeist and where to find them.
+## Overview
+
+All agent prompts are centralized in a single file for maintainability and consistency.
 
 ## Location
 
-All prompts are centralized in a single file for easy maintenance:
+`src/prompts/tool-prompts.ts`
 
-**[src/prompts/tool-prompts.ts](../src/prompts/tool-prompts.ts)**
+## Prompts
 
-## Available Prompts
+### SYSTEM_PROMPT
 
-### 1. System Prompt (`SYSTEM_PROMPT`)
+Main system prompt for the AI assistant.
 
-**Used by:** [src/sidepanel.ts](../src/sidepanel.ts) (Agent initialization)
+**Used by**: `src/sidepanel.ts` (agent initialization)
 
-**Description:** The main system prompt that sets up the AI assistant's behavior, explains available tools, and provides detailed guidance on creating and using skills for token-efficient automation.
+**Contains**:
+- Available tools overview
+- Skills explanation and usage
+- Tool-specific guidance (navigation, browser JavaScript)
+- Skills creation workflow
 
-**Key sections:**
-- Tool overview
-- Skills explanation (why they matter, common functions)
-- Skills usage instructions
-- Skills creation workflow (with mandatory user testing)
-
-**Usage:**
+**Structure**:
 ```typescript
-import { SYSTEM_PROMPT } from "./prompts/tool-prompts.js";
+export const SYSTEM_PROMPT = `
+# Available Tools
+...tool descriptions...
 
-const systemPrompt = SYSTEM_PROMPT + `
-### Suggesting Skills
-...additional context...
+# Skills
+...skills explanation...
 `;
 ```
 
-### 2. Browser JavaScript Tool Description (`BROWSER_JAVASCRIPT_DESCRIPTION`)
+### BROWSER_JAVASCRIPT_DESCRIPTION
 
-**Used by:** [src/tools/browser-javascript.ts](../src/tools/browser-javascript.ts)
+Complete description of the `browser_javascript` tool.
 
-**Description:** Complete description of the `browser_javascript` tool that executes JavaScript code in the active browser tab's context.
+**Used by**: `src/tools/browser-javascript.ts`
 
-**Key sections:**
-- Environment capabilities (DOM access, page variables, web APIs, frameworks)
-- Code execution context (main world access)
-- Output options (console.log, returnFile, return values)
-- Examples of common tasks
-- Navigation warnings
+**Contains**:
+- Environment capabilities (DOM, APIs, frameworks)
+- Execution context details
+- Output options
+- Common task examples
+- Navigation restrictions
 
-**Usage:**
+### SKILL_TOOL_DESCRIPTION
+
+Complete description of the `skill` tool.
+
+**Used by**: `src/tools/skill.ts`
+
+**Contains**:
+- Why skills matter (token efficiency)
+- Skill actions (get, list, create, update, delete)
+- Creation workflow with user testing requirements
+- Example Gmail skill
+
+### NAVIGATE_TOOL_DESCRIPTION
+
+Description of the `navigate` tool.
+
+**Used by**: `src/tools/navigate.ts`
+
+**Contains**:
+- URL navigation
+- History navigation (back/forward)
+- Waits for page load completion
+- Returns available skills
+
+## Related Prompts
+
+The shared web-ui library has its own prompts:
+
+`pi-mono/packages/web-ui/src/prompts/tool-prompts.ts`
+
+Contains:
+- JavaScript REPL tool
+- Artifacts tool
+- Shared runtime descriptions
+
+## Maintenance
+
+### Updating Prompts
+
+1. Edit `src/prompts/tool-prompts.ts`
+2. Run `./check.sh` to verify no breaking changes
+3. Test with actual agent interactions
+4. Keep terminology consistent across all prompts
+
+### Guidelines
+
+- **Be concise**: LLMs work better with focused instructions
+- **Use examples**: Show don't tell when possible
+- **Be explicit**: State rules clearly (DO/DON'T, ALWAYS/NEVER)
+- **Structure clearly**: Use headers and formatting
+- **Test thoroughly**: Changes affect agent behavior
+
+### Common Patterns
+
+**Tool descriptions**:
 ```typescript
-import { BROWSER_JAVASCRIPT_DESCRIPTION } from "../prompts/tool-prompts.js";
+export const TOOL_DESCRIPTION = `
+Brief one-line summary.
 
-export const browserJavaScriptTool: AgentTool<...> = {
-	name: "browser_javascript",
-	description: BROWSER_JAVASCRIPT_DESCRIPTION,
-	...
-};
+Parameters:
+- param1: description
+- param2: description
+
+Returns: what the tool outputs
+
+IMPORTANT: Critical usage notes
+`;
 ```
 
-### 3. Skill Management Tool Description (`SKILL_TOOL_DESCRIPTION`)
-
-**Used by:** [src/tools/skill.ts](../src/tools/skill.ts)
-
-**Description:** Complete description of the `skill` tool that manages reusable JavaScript libraries for domain-specific automation.
-
-**Key sections:**
-- Why skills matter (token efficiency, speed, consistency)
-- What skills do (auto-inject, provide functions, save tokens)
-- Example Gmail skill with full workflow
-- Available actions (get, list, create, update, delete)
-- Creating skills workflow (CRITICAL - with mandatory user testing steps)
-- User testing requirements
-
-**Usage:**
+**System prompt sections**:
 ```typescript
-import { SKILL_TOOL_DESCRIPTION } from "../prompts/tool-prompts.js";
+export const SYSTEM_PROMPT = `
+## Section Title
 
-export const skillTool: AgentTool<...> = {
-	name: "skill",
-	description: SKILL_TOOL_DESCRIPTION,
-	...
-};
+Key points in structured format.
+
+Examples:
+- Example 1
+- Example 2
+
+CRITICAL: Important behaviors
+`;
 ```
 
-## Related Prompts in pi-mono
+## Files
 
-Sitegeist also uses the shared web-ui library which has its own centralized prompts:
-
-**[../pi-mono/packages/web-ui/src/prompts/tool-prompts.ts](../../pi-mono/packages/web-ui/src/prompts/tool-prompts.ts)**
-
-This file contains:
-- JavaScript REPL tool prompts (sandboxed JavaScript execution)
-- Artifacts tool prompts (file artifact management)
-- Attachments runtime provider prompts (file access APIs)
-
-## Maintenance Guidelines
-
-When updating prompts:
-
-1. **Single Sources of Truth**: Always edit [src/prompts/tool-prompts.ts](../src/prompts/tool-prompts.ts) or [../pi-mono/packages/web-ui/src/prompts/tool-prompts.ts](../../pi-mono/packages/web-ui/src/prompts/tool-prompts.ts)
-2. **Don't Duplicate**: Never copy prompts to other files - import them instead
-3. **Test After Changes**: Run `npm run typecheck` to verify no breaking changes
-4. **Keep Consistent**: Maintain consistent formatting and terminology across all prompts
-5. **Document Changes**: Update this file if adding new prompts or changing structure
+- `src/prompts/tool-prompts.ts` - Sitegeist prompts
+- `pi-mono/packages/web-ui/src/prompts/tool-prompts.ts` - Shared prompts
