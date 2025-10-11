@@ -515,13 +515,14 @@ export class BrowserJavaScriptTool
 					browser.userScripts &&
 					typeof browser.userScripts.execute === "function"
 				) {
-					// Configure this specific world with CSP that allows eval/inline but blocks network
+					// Configure this specific world with CSP that allows eval/inline but blocks all network
 					try {
 						await browser.userScripts.configureWorld({
 							worldId: sandboxId,
 							messaging: true,
-							// Allow eval and inline scripts for code execution, but block all network requests
-							csp: "script-src 'unsafe-eval' 'unsafe-inline'; connect-src 'none'; default-src 'none';",
+							// Allow eval and inline scripts for code execution, but block ALL network access
+							// Explicitly block common exfiltration vectors: fetch, XHR, WebSocket, img, iframe, etc.
+							csp: "script-src 'unsafe-eval' 'unsafe-inline'; connect-src 'none'; img-src 'none'; media-src 'none'; frame-src 'none'; font-src 'none'; object-src 'none'; default-src 'none';",
 						});
 					} catch (e) {
 						console.warn("Failed to configure userScripts world:", e);
