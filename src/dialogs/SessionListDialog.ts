@@ -499,13 +499,10 @@ export class SitegeistSessionListDialog extends DialogBase {
 													</div>
 
 													<!-- Stats row -->
-													<div class="flex items-center gap-3 text-xs text-muted-foreground">
+													<div class="flex items-center flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
 														<span class="font-medium">${this.formatDate(session.lastModified)}</span>
-														<span>·</span>
 														<span>${session.messageCount} ${i18n("messages")}</span>
-														<span>·</span>
 														<span>${formatUsage(session.usage)}</span>
-														<span>·</span>
 														<span class="font-semibold ${cost > 0.01 ? "text-orange-500" : "text-green-600"}">
 															$${cost.toFixed(4)}
 														</span>
