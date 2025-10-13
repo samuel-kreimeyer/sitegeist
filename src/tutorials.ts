@@ -108,4 +108,14 @@ Ask what they'd like to try or explore next.`,
 		prompt:
 			"Create skills for shop.billa.at and spar.at to search for products. Follow the skills workflow - break it down into small steps we test together: 1) Find search input field, add text, and confirm with me the text is there. Use 'Schokolade' as the search term, so we get many results later when we try to figure out paging. 2) Try submitting (enter key or button click), and ask me if it worked. 3) Extract product name/image URL/packaging/price from results. 4) Page through results using UI. Iterate based on my feedback. Once each skill works, save it. Then use both skills to search for Mikado and create an artifact comparing prices across both stores.",
 	},
+	{
+		label: "GitHub Trending to Sheets",
+		prompt:
+			"Go to GitHub trending page, scrape the top 10 repos (name, language, stars, forks, description) and save that to trending.json artifact. Then, create a blank Google Sheet (can be done with URL navigation). Finally, output a formatted Google Sheets table with a blue header containing the trending repos data.",
+	},
+	{
+		label: "LinkedIn Engagement",
+		prompt:
+			"Check my last 3 LinkedIn posts for unanswered comments and give me suggestions what I could answer. For each unanswered comment, consider the original post content and the full comment thread context to generate relevant replies. Suggest 2-3 response options with different tones (professional, casual, humorous) so I can pick what fits best.",
+	},
 ];
