@@ -34,6 +34,8 @@ declare module "@mariozechner/mini-lit" {
 		"Created skill": string;
 		"Updating skill": string;
 		"Updated skill": string;
+		"Patching skill": string;
+		"Patched skill": string;
 		"Deleting skill": string;
 		"Processing skill...": string;
 		"No skills found": string;
@@ -70,6 +72,7 @@ declare module "@mariozechner/mini-lit" {
 		"Older than 90 days": string;
 		"Search sessions...": string;
 		"Total: {count} sessions · {messages} messages · ${cost}": string;
+		"Open tabs": string;
 	}
 }
 
@@ -100,6 +103,8 @@ const sitegeistTranslations = {
 		"Created skill": "Created skill",
 		"Updating skill": "Updating skill",
 		"Updated skill": "Updated skill",
+		"Patching skill": "Patching skill",
+		"Patched skill": "Patched skill",
 		"Deleting skill": "Deleting skill",
 		"Processing skill...": "Processing skill...",
 		"No skills found": "No skills found",
@@ -138,6 +143,7 @@ const sitegeistTranslations = {
 		"Older than 90 days": "Older than 90 days",
 		"Search sessions...": "Search sessions...",
 		"Total: {count} sessions · {messages} messages · ${cost}": "Total: {count} sessions · {messages} messages · ${cost}",
+		"Open tabs": "Open tabs",
 	},
 	de: {
 		"Permission request failed": "Berechtigungsanfrage fehlgeschlagen",
@@ -165,6 +171,8 @@ const sitegeistTranslations = {
 		"Created skill": "Skill erstellt",
 		"Updating skill": "Aktualisiere Skill",
 		"Updated skill": "Skill aktualisiert",
+		"Patching skill": "Patche Skill",
+		"Patched skill": "Skill gepatcht",
 		"Deleting skill": "Lösche Skill",
 		"Processing skill...": "Verarbeite Skill...",
 		"No skills found": "Keine Skills gefunden",
@@ -203,6 +211,7 @@ const sitegeistTranslations = {
 		"Older than 90 days": "Älter als 90 Tage",
 		"Search sessions...": "Sitzungen durchsuchen...",
 		"Total: {count} sessions · {messages} messages · ${cost}": "Gesamt: {count} Sitzungen · {messages} Nachrichten · ${cost}",
+		"Open tabs": "Offene Tabs",
 	},
 };
 

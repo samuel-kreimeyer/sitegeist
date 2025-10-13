@@ -1,8 +1,6 @@
 // Minimal sandbox.js - just listens for sandbox-load and writes the content
 window.addEventListener("message", (event) => {
 	if (event.data.type === "sandbox-load") {
-		console.log(event.data.code);
-
 		// Validate HTML and JavaScript syntax before document.write()
 		try {
 			// Parse HTML to extract script tags

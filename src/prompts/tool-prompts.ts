@@ -343,10 +343,51 @@ Then use it efficiently:
    - Including https:// in pattern (only use domain.com/path)
    - Forgetting that * doesn't match / characters
 
-4. **update** - Update skill (merges fields)
+4. **update** - Update skill (merges fields, replaces entire field content)
    { action: "update", name: "skill-name", data: { library: "..." } }
 
-5. **delete** - Delete skill
+   **IMPORTANT:** Use 'patch' instead of 'update' whenever possible - it's faster and more token-efficient.
+   Only use 'update' when rewriting entire fields. For small changes, use 'patch'.
+
+5. **patch** - Patch skill (string replacement in specific fields) - **PREFERRED for modifications**
+   { action: "patch", name: "skill-name", patches: { library: { old_string: "...", new_string: "..." } } }
+
+   **Why patch is better:**
+   - Faster: No need to retrieve full library code with includeLibraryCode: true
+   - More token-efficient: Only send the changed portion
+   - Safer: Ensures you're modifying the exact code you expect
+
+   Supported fields: library, description, examples
+
+   Example - Fix a bug in library:
+   {
+     action: "patch",
+     name: "gmail-basics",
+     patches: {
+       library: {
+         old_string: "await new Promise(r => setTimeout(r, 500));",
+         new_string: "await new Promise(r => setTimeout(r, 1000));"
+       }
+     }
+   }
+
+   Example - Update description:
+   {
+     action: "patch",
+     name: "gmail-basics",
+     patches: {
+       description: {
+         old_string: "**Known Limitations:**\n- None",
+         new_string: "**Known Limitations:**\n- Compose button selector may change"
+       }
+     }
+   }
+
+   **When to use patch vs update:**
+   - patch: Small targeted changes (fix bugs, add features, update docs)
+   - update: Complete rewrites or when you need to change multiple unrelated parts
+
+6. **delete** - Delete skill
    { action: "delete", name: "skill-name" }
 
 **Creating Skills Workflow (CRITICAL - Follow Each Step):**

@@ -6,6 +6,13 @@ import { NATIVE_INPUT_EVENTS_DESCRIPTION } from "../prompts/tool-prompts.js";
  * Dispatches REAL browser events (isTrusted: true) for automation of anti-bot sites.
  */
 export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider {
+	private modifiers = 0; // Track currently pressed modifiers
+	// Modifier bit flags for CDP
+	private readonly MODIFIER_ALT = 1;
+	private readonly MODIFIER_CTRL = 2;
+	private readonly MODIFIER_META = 4;
+	private readonly MODIFIER_SHIFT = 8;
+
 	constructor(private tabId: number) {}
 
 	getData(): Record<string, any> {
@@ -58,12 +65,45 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 			'Insert': { key: 'Insert', code: 'Insert', keyCode: 45 },
 		};
 
+		// Check if it's in the keyMap first
 		const keyInfo = keyMap[key];
-		if (!keyInfo) {
-			throw new Error(`Unknown key name: ${key}. Supported keys: ${Object.keys(keyMap).join(', ')}`);
+		if (keyInfo) {
+			return keyInfo;
 		}
 
-		return keyInfo;
+		// For single character keys (a-z, A-Z, 0-9, etc.), generate the info
+		if (key.length === 1) {
+			const char = key;
+			const upperChar = char.toUpperCase();
+			const keyCode = upperChar.charCodeAt(0);
+
+			// Letter keys (a-z, A-Z)
+			if (/[a-zA-Z]/.test(char)) {
+				return {
+					key: char,
+					code: `Key${upperChar}`,
+					keyCode: keyCode,
+				};
+			}
+
+			// Number keys (0-9)
+			if (/[0-9]/.test(char)) {
+				return {
+					key: char,
+					code: `Digit${char}`,
+					keyCode: keyCode,
+				};
+			}
+
+			// For other single characters, just use the character itself
+			return {
+				key: char,
+				code: `Key${upperChar}`,
+				keyCode: keyCode,
+			};
+		}
+
+		throw new Error(`Unknown key name: ${key}. Supported keys: ${Object.keys(keyMap).join(', ')}, or any single character (a-z, 0-9, etc.)`);
 	}
 
 	getRuntime(): (sandboxId: string) => void {
@@ -266,14 +306,21 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 
 				const keyInfo = this.getKeyInfo(message.key);
 
+				// Update modifier state
+				if (message.key === 'Alt') this.modifiers |= this.MODIFIER_ALT;
+				if (message.key === 'Control') this.modifiers |= this.MODIFIER_CTRL;
+				if (message.key === 'Meta') this.modifiers |= this.MODIFIER_META;
+				if (message.key === 'Shift') this.modifiers |= this.MODIFIER_SHIFT;
+
 				const keyDownResult = await chrome.debugger.sendCommand({ tabId: this.tabId }, "Input.dispatchKeyEvent", {
 					type: "keyDown",
 					key: keyInfo.key,
 					code: keyInfo.code,
 					windowsVirtualKeyCode: keyInfo.keyCode,
 					nativeVirtualKeyCode: keyInfo.keyCode,
+					modifiers: this.modifiers,
 				});
-				console.log("[NativeInput] Key down result:", keyDownResult);
+				console.log("[NativeInput] Key down result:", keyDownResult, "modifiers:", this.modifiers);
 
 				console.log("[NativeInput] Key down completed successfully");
 				respond({ success: true });
@@ -288,8 +335,15 @@ export class NativeInputEventsRuntimeProvider implements SandboxRuntimeProvider 
 					code: keyInfo.code,
 					windowsVirtualKeyCode: keyInfo.keyCode,
 					nativeVirtualKeyCode: keyInfo.keyCode,
+					modifiers: this.modifiers,
 				});
-				console.log("[NativeInput] Key up result:", keyUpResult);
+				console.log("[NativeInput] Key up result:", keyUpResult, "modifiers:", this.modifiers);
+
+				// Update modifier state after keyUp
+				if (message.key === 'Alt') this.modifiers &= ~this.MODIFIER_ALT;
+				if (message.key === 'Control') this.modifiers &= ~this.MODIFIER_CTRL;
+				if (message.key === 'Meta') this.modifiers &= ~this.MODIFIER_META;
+				if (message.key === 'Shift') this.modifiers &= ~this.MODIFIER_SHIFT;
 
 				console.log("[NativeInput] Key up completed successfully");
 				respond({ success: true });

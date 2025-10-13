@@ -9,13 +9,10 @@ import {
 import { type Static, Type } from "@sinclair/typebox";
 import { Loader2 } from "lucide";
 import { SkillPill } from "../components/SkillPill.js";
+import { TabPill } from "../components/TabPill.js";
 import { getSitegeistStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
 import "../utils/i18n-extension.js";
-
-// Cross-browser API compatibility
-// @ts-expect-error - browser global exists in Firefox, chrome in Chrome
-const browser = globalThis.browser || globalThis.chrome;
 
 // Track tool-initiated navigations to filter out duplicate navigation messages
 let isNavigating = false;
@@ -120,11 +117,16 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 
 		// Handle switch tab action
 		if ("switchToTab" in args) {
-			return this.switchToTab(args.switchToTab);
+			markNavigationStart();
+			try {
+				return await this.switchToTab(args.switchToTab);
+			} finally {
+				markNavigationEnd();
+			}
 		}
 
 		// Get active tab for navigation actions
-		const [tab] = await browser.tabs.query({
+		const [tab] = await chrome.tabs.query({
 			active: true,
 			currentWindow: true,
 		});
@@ -143,7 +145,7 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 				if ("newTab" in args && args.newTab) {
 					finalUrl = await this.openInNewTab(args.url, signal);
 					// Get the newly created tab
-					const tabs = await browser.tabs.query({});
+					const tabs = await chrome.tabs.query({});
 					const newTab = tabs.find((t: chrome.tabs.Tab) => t.url === finalUrl);
 					if (newTab?.id) {
 						targetTabId = newTab.id;
@@ -162,10 +164,11 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 			markNavigationEnd();
 		}
 
-		// Get updated tab info
-		const updatedTab = await browser.tabs.get(targetTabId);
-		const title = updatedTab.title || "Untitled";
-		const favicon = updatedTab.favIconUrl;
+		// Get updated tab info using query (better cross-browser support)
+		const updatedTabs = await chrome.tabs.query({});
+		const updatedTab = updatedTabs.find((t: chrome.tabs.Tab) => t.id === targetTabId);
+		const title = updatedTab?.title || "Untitled";
+		const favicon = updatedTab?.favIconUrl;
 
 		// Get skills for the final URL
 		const skillsRepo = getSitegeistStorage().skills;
@@ -218,7 +221,7 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 				details: chrome.webNavigation.WebNavigationFramedCallbackDetails,
 			) => {
 				if (details.tabId === tabId && details.frameId === 0) {
-					browser.webNavigation.onDOMContentLoaded.removeListener(listener);
+					chrome.webNavigation.onDOMContentLoaded.removeListener(listener);
 					if (abortListener) signal?.removeEventListener("abort", abortListener);
 					resolve(details.url);
 				}
@@ -226,8 +229,8 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 
 			// Set up abort listener
 			const abortListener = () => {
-				if (browser.webNavigation?.onDOMContentLoaded) {
-					browser.webNavigation.onDOMContentLoaded.removeListener(listener);
+				if (chrome.webNavigation?.onDOMContentLoaded) {
+					chrome.webNavigation.onDOMContentLoaded.removeListener(listener);
 				}
 				reject(new Error("Aborted"));
 			};
@@ -239,9 +242,9 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 			chrome.webNavigation.onDOMContentLoaded.addListener(listener);
 
 			// Trigger navigation
-			browser.tabs.update(tabId, { url }).catch((err: Error) => {
-				if (browser.webNavigation?.onDOMContentLoaded) {
-					browser.webNavigation.onDOMContentLoaded.removeListener(listener);
+			chrome.tabs.update(tabId, { url }).catch((err: Error) => {
+				if (chrome.webNavigation?.onDOMContentLoaded) {
+					chrome.webNavigation.onDOMContentLoaded.removeListener(listener);
 				}
 				if (abortListener) signal?.removeEventListener("abort", abortListener);
 				reject(err);
@@ -259,7 +262,7 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 		}
 
 		// First check if there's history available in that direction
-		const [result] = await browser.scripting.executeScript({
+		const [result] = await chrome.scripting.executeScript({
 			target: { tabId: tabId },
 			func: (dir: "back" | "forward") => {
 				const canNavigate = dir === "back" ? history.length > 1 : false; // Can't reliably detect forward
@@ -288,7 +291,7 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 				details: chrome.webNavigation.WebNavigationFramedCallbackDetails,
 			) => {
 				if (details.tabId === tabId && details.frameId === 0) {
-					browser.webNavigation.onCompleted.removeListener(listener);
+					chrome.webNavigation.onCompleted.removeListener(listener);
 					if (abortListener) signal?.removeEventListener("abort", abortListener);
 					if (timeout) clearTimeout(timeout);
 					resolve(details.url);
@@ -297,8 +300,8 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 
 			// Set up abort listener
 			const abortListener = () => {
-				if (browser.webNavigation?.onCompleted) {
-					browser.webNavigation.onCompleted.removeListener(listener);
+				if (chrome.webNavigation?.onCompleted) {
+					chrome.webNavigation.onCompleted.removeListener(listener);
 				}
 				if (timeout) clearTimeout(timeout);
 				reject(new Error("Aborted"));
@@ -312,14 +315,14 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 
 			// Set a timeout to detect if navigation didn't happen (no history available for forward)
 			const timeout = setTimeout(() => {
-				browser.webNavigation.onCompleted.removeListener(listener);
+				chrome.webNavigation.onCompleted.removeListener(listener);
 				if (abortListener) signal?.removeEventListener("abort", abortListener);
 				// Navigation didn't happen, return current URL
 				resolve(currentUrl);
 			}, 1000); // 1 second timeout
 
 			// Execute history navigation in the page
-			browser.scripting
+			chrome.scripting
 				.executeScript({
 					target: { tabId: tabId },
 					func: (dir: "back" | "forward") => {
@@ -328,7 +331,7 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 					args: [direction],
 				})
 				.catch((err: Error) => {
-					browser.webNavigation.onCompleted.removeListener(listener);
+					chrome.webNavigation.onCompleted.removeListener(listener);
 					if (abortListener) signal?.removeEventListener("abort", abortListener);
 					if (timeout) clearTimeout(timeout);
 					reject(err);
@@ -341,7 +344,7 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 			throw new Error("Aborted");
 		}
 
-		const newTab = await browser.tabs.create({ url, active: true });
+		const newTab = await chrome.tabs.create({ url, active: true });
 
 		if (!newTab.id) {
 			throw new Error("Failed to create new tab");
@@ -358,15 +361,15 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 				details: chrome.webNavigation.WebNavigationFramedCallbackDetails,
 			) => {
 				if (details.tabId === newTab.id && details.frameId === 0) {
-					browser.webNavigation.onDOMContentLoaded.removeListener(listener);
+					chrome.webNavigation.onDOMContentLoaded.removeListener(listener);
 					if (abortListener) signal?.removeEventListener("abort", abortListener);
 					resolve(details.url);
 				}
 			};
 
 			const abortListener = () => {
-				if (browser.webNavigation?.onDOMContentLoaded) {
-					browser.webNavigation.onDOMContentLoaded.removeListener(listener);
+				if (chrome.webNavigation?.onDOMContentLoaded) {
+					chrome.webNavigation.onDOMContentLoaded.removeListener(listener);
 				}
 				reject(new Error("Aborted"));
 			};
@@ -380,7 +383,7 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 	}
 
 	private async listTabs(): Promise<{ output: string; details: NavigateResult }> {
-		const tabs = await browser.tabs.query({});
+		const tabs = await chrome.tabs.query({});
 
 		const tabInfos: TabInfo[] = tabs
 			.filter((t: chrome.tabs.Tab): t is chrome.tabs.Tab & { id: number; url: string } =>
@@ -409,19 +412,23 @@ CRITICAL: Use this instead of window.location, history.back/forward in browser_j
 	}
 
 	private async switchToTab(tabId: number): Promise<{ output: string; details: NavigateResult }> {
-		// Get the tab to switch to
-		const tab = await browser.tabs.get(tabId);
+		// Ensure tabId is a number (in case it comes through as string)
+		const numericTabId = typeof tabId === 'string' ? parseInt(tabId, 10) : tabId;
+
+		// Query for the tab to get its details
+		const tabs = await chrome.tabs.query({});
+		const tab = tabs.find((t: chrome.tabs.Tab) => t.id === numericTabId);
 
 		if (!tab) {
-			throw new Error(`Tab ${tabId} not found`);
+			throw new Error(`Tab ${numericTabId} not found`);
 		}
 
 		// Activate the tab
-		await browser.tabs.update(tabId, { active: true });
+		await chrome.tabs.update(numericTabId, { active: true });
 
 		// Focus the window containing the tab
 		if (tab.windowId) {
-			await browser.windows.update(tab.windowId, { focused: true });
+			await chrome.windows.update(tab.windowId, { focused: true });
 		}
 
 		const finalUrl = tab.url || "";
@@ -477,7 +484,7 @@ export const navigateRenderer: ToolRenderer<NavigateParams, NavigateResult> = {
 	render(
 		params: NavigateParams | undefined,
 		result: ToolResultMessage<NavigateResult> | undefined,
-		isStreaming?: boolean,
+		_isStreaming?: boolean,
 	): ToolRenderResult {
 		// Loading state (params but no result)
 		if (params && !result) {
@@ -511,25 +518,18 @@ export const navigateRenderer: ToolRenderer<NavigateParams, NavigateResult> = {
 
 		// Complete state (with result)
 		if (result && !result.isError && result.details) {
-			const { finalUrl, title, favicon, skills, tabs, switchedToTab } = result.details;
+			const { finalUrl, title, favicon, skills, tabs } = result.details;
 
 			// Handle tab listing
 			if (tabs) {
 				return {
 					content: html`
-						<div class="my-2 space-y-2">
-							<div class="text-sm font-medium text-muted-foreground">Open tabs (${tabs.length}):</div>
-							${tabs.map((tab) => html`
-								<div class="flex items-center gap-2 px-3 py-2 text-sm bg-card border border-border rounded-lg">
-									${tab.favicon ? html`<img src="${tab.favicon}" alt="" class="w-4 h-4 flex-shrink-0" />` : ""}
-									<span class="truncate flex-1">${tab.title}</span>
-									<span class="text-xs text-muted-foreground">Tab ${tab.id}</span>
-									${tab.active ? html`<span class="text-xs text-primary font-medium">[ACTIVE]</span>` : ""}
-								</div>
-							`)}
+						<div class="flex items-center gap-2 flex-wrap">
+							<span class="text-sm text-muted-foreground">${i18n("Open tabs")}</span>
+							${tabs.map((tab) => TabPill(tab, true))}
 						</div>
 					`,
-					isCustom: true,
+					isCustom: false,
 				};
 			}
 
@@ -554,7 +554,7 @@ export const navigateRenderer: ToolRenderer<NavigateParams, NavigateResult> = {
 						<div class="my-2 space-y-2">
 							<button
 								class="inline-flex items-center gap-2 px-3 py-2 text-sm text-card-foreground bg-card border border-border rounded-lg hover:bg-accent/50 transition-colors max-w-full cursor-pointer shadow-lg"
-								@click=${() => browser.tabs.create({ url: finalUrl })}
+								@click=${() => chrome.tabs.create({ url: finalUrl })}
 								title="${i18n("Click to open")}: ${finalUrl}"
 							>
 								<img src="${faviconUrl}" alt="" class="w-4 h-4 flex-shrink-0" />
