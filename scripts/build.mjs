@@ -16,9 +16,9 @@ const packageRoot = join(__dirname, "..");
 const isWatch = process.argv.includes("--watch");
 const staticDir = join(packageRoot, "static");
 
-// Determine target browser from command line arguments
-const targetBrowser = process.argv.includes("--firefox") ? "firefox" : "chrome";
-const outDir = join(packageRoot, `dist-${targetBrowser}`);
+// Chrome only
+const targetBrowser = "chrome";
+const outDir = join(packageRoot, "dist-chrome");
 
 const entryPoints = {
 	sidepanel: join(packageRoot, "src/sidepanel.ts"),
@@ -37,7 +37,7 @@ const buildOptions = {
 	bundle: true,
 	outdir: outDir,
 	format: "esm",
-	target: targetBrowser === "firefox" ? ["firefox115"] : ["chrome120"],
+	target: ["chrome120"],
 	platform: "browser",
 	sourcemap: isWatch ? "inline" : true,
 	entryNames: "[name]",

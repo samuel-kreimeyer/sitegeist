@@ -6,11 +6,10 @@
 	"type": "module",
 	"main": "dist/background.js",
 	"scripts": {
-		"clean": "rm -rf dist-chrome dist-firefox",
+		"clean": "rm -rf dist-chrome",
 		"build:chrome": "node ./scripts/build.mjs && tailwindcss -i ./src/app.css -o ./dist-chrome/app.css --minify",
-		"build:firefox": "node ./scripts/build.mjs --firefox && tailwindcss -i ./src/app.css -o ./dist-firefox/app.css --minify",
-		"build": "npm run build:chrome && npm run build:firefox",
-		"dev": "concurrently \"node ./scripts/build.mjs --watch\" \"node ./scripts/build.mjs --firefox --watch\" \"tailwindcss -i ./src/app.css -o ./dist-chrome/app.css --watch\" \"tailwindcss -i ./src/app.css -o ./dist-firefox/app.css --watch\" \"node ./scripts/dev-server.mjs\"",
+		"build": "npm run build:chrome",
+		"dev": "concurrently \"node ./scripts/build.mjs --watch\" \"tailwindcss -i ./src/app.css -o ./dist-chrome/app.css --watch\" \"node ./scripts/dev-server.mjs\"",
 		"typecheck": "tsc --noEmit",
 		"check": "npm run typecheck"
 	},
