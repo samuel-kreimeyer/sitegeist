@@ -11,7 +11,8 @@
 		"build": "npm run build:chrome",
 		"dev": "concurrently \"node ./scripts/build.mjs --watch\" \"tailwindcss -i ./src/app.css -o ./dist-chrome/app.css --watch\" \"node ./scripts/dev-server.mjs\"",
 		"typecheck": "tsc --noEmit",
-		"check": "biome check --write . && npm run typecheck"
+		"check": "biome check --write . && npm run typecheck",
+		"prepare": "husky"
 	},
 	"dependencies": {
 		"@mariozechner/jailjs": "^0.1.0",
@@ -38,6 +39,7 @@
 		"@types/webextension-polyfill": "^0.12.4",
 		"concurrently": "^9.2.1",
 		"esbuild": "^0.25.10",
+		"husky": "^9.1.7",
 		"ws": "^8.18.0"
 	}
 }
