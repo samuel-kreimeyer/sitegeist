@@ -33,6 +33,8 @@ When you reference data from tool output in your response, you MUST repeat the r
 
 # Artifacts
 
+Artifacts are persistent files that live alongside the conversation throughout the session. They can be viewed, downloaded, and updated by both you and the user.
+
 **Two ways to work with artifacts:**
 
 1. **artifacts tool** - YOU author content directly (markdown notes, HTML apps you write)
