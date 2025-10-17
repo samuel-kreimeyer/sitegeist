@@ -7,10 +7,6 @@ import { getSitegeistStorage } from "../../storage/app-storage.js";
 import type { NavigateParams, NavigateTool } from "../navigate.js";
 import { buildWrapperCode, checkUserScriptsAvailability } from "./userscripts-helpers.js";
 
-// Cross-browser API compatibility
-// @ts-expect-error - browser global exists in Firefox, chrome in Chrome
-const browser = globalThis.browser || globalThis.chrome;
-
 /**
  * BrowserJsRuntimeProvider
  *
@@ -95,7 +91,7 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 		}
 
 		// Get current tab
-		const [tab] = await browser.tabs.query({
+		const [tab] = await chrome.tabs.query({
 			active: true,
 			currentWindow: true,
 		});
@@ -171,10 +167,10 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 
 		try {
 			// Execute via userScripts API
-			if (browser.userScripts && typeof browser.userScripts.execute === "function") {
+			if (chrome.userScripts && typeof chrome.userScripts.execute === "function") {
 				// Configure the fixed world with CSP
 				try {
-					await browser.userScripts.configureWorld({
+					await chrome.userScripts.configureWorld({
 						worldId: FIXED_WORLD_ID,
 						messaging: true,
 						csp: "script-src 'unsafe-eval' 'unsafe-inline'; connect-src 'none'; img-src 'none'; media-src 'none'; frame-src 'none'; font-src 'none'; object-src 'none'; default-src 'none';",
@@ -183,7 +179,7 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 					console.warn("[BrowserJsRuntimeProvider] Failed to configure userScripts world:", e);
 				}
 
-				const results = await browser.userScripts.execute({
+				const results = await chrome.userScripts.execute({
 					js: [{ code: wrapperCode }],
 					target: { tabId: tab.id, allFrames: false },
 					world: "USER_SCRIPT",

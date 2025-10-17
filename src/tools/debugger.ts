@@ -11,10 +11,6 @@ import { type Static, Type } from "@sinclair/typebox";
 import { createRef, ref } from "lit/directives/ref.js";
 import { Bug } from "lucide";
 
-// Cross-browser API compatibility
-// @ts-expect-error - browser global exists in Firefox, chrome in Chrome
-const browser = globalThis.browser || globalThis.chrome;
-
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -77,7 +73,7 @@ CRITICAL: Use browserjs() and repl tool for DOM manipulation. Use this ONLY for 
 		}
 
 		// Get active tab
-		const [tab] = await browser.tabs.query({
+		const [tab] = await chrome.tabs.query({
 			active: true,
 			currentWindow: true,
 		});
@@ -90,7 +86,7 @@ CRITICAL: Use browserjs() and repl tool for DOM manipulation. Use this ONLY for 
 			// Handle cookies action
 			if (args.action === "cookies") {
 				// Check if cookies API is available
-				if (!browser.cookies) {
+				if (!chrome.cookies) {
 					throw new Error(
 						`TELL THE USER: Cookie access is not available. The "cookies" permission needs to be added to the extension manifest.\n\n` +
 							`INSTRUCT THE USER TO:\n` +
@@ -112,7 +108,7 @@ CRITICAL: Use browserjs() and repl tool for DOM manipulation. Use this ONLY for 
 				}
 
 				try {
-					const cookies = await browser.cookies.getAll({ url: tab.url });
+					const cookies = await chrome.cookies.getAll({ url: tab.url });
 					const output = cookies.map((c: { name: string; value: string }) => `${c.name}: ${c.value}`).join("\n");
 					const details: DebuggerResult = { value: cookies };
 					return { output, details };
@@ -129,7 +125,7 @@ CRITICAL: Use browserjs() and repl tool for DOM manipulation. Use this ONLY for 
 
 				// Attach debugger if not already attached
 				try {
-					await browser.debugger.attach({ tabId: tab.id }, "1.3");
+					await chrome.debugger.attach({ tabId: tab.id }, "1.3");
 				} catch (err) {
 					// Already attached is fine
 					if (!(err instanceof Error) || !err.message?.includes("already attached")) {
@@ -138,30 +134,22 @@ CRITICAL: Use browserjs() and repl tool for DOM manipulation. Use this ONLY for 
 				}
 
 				// Execute code in MAIN world using Runtime.evaluate with returnByValue
-				const result = await browser.debugger.sendCommand({ tabId: tab.id }, "Runtime.evaluate", {
+				const result = await chrome.debugger.sendCommand({ tabId: tab.id }, "Runtime.evaluate", {
 					expression: args.code,
 					returnByValue: true,
 				});
 
-				// Check for exceptions
-				if (result.exceptionDetails) {
-					const error =
-						result.exceptionDetails.exception?.description || result.exceptionDetails.text || "Unknown error";
-					throw new Error(`MAIN world execution failed: ${error}`);
-				}
-
 				// Extract the actual value
-				const value = result.result?.value;
-				const details: DebuggerResult = { value };
+				const details: DebuggerResult = { value: result };
 
 				// Format output
 				let output = "";
-				if (value === undefined) {
+				if (result === undefined) {
 					output = "undefined";
-				} else if (typeof value === "string") {
-					output = value;
+				} else if (typeof result === "string") {
+					output = result;
 				} else {
-					output = JSON.stringify(value, null, 2);
+					output = JSON.stringify(result, null, 2);
 				}
 
 				return { output, details };

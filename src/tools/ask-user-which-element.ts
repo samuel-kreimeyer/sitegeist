@@ -12,10 +12,6 @@ import { Loader2, MousePointer2 } from "lucide";
 import { ASK_USER_WHICH_ELEMENT_TOOL_DESCRIPTION } from "../prompts/prompts.js";
 import "../utils/i18n-extension.js";
 
-// Cross-browser API compatibility
-// @ts-expect-error - browser global exists in Firefox, chrome in Chrome
-const browser = globalThis.browser || globalThis.chrome;
-
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -540,7 +536,7 @@ export class AskUserWhichElementTool implements AgentTool<typeof selectElementSc
 			}
 
 			// Get the active tab
-			const [tab] = await browser.tabs.query({
+			const [tab] = await chrome.tabs.query({
 				active: true,
 				currentWindow: true,
 			});
@@ -566,9 +562,9 @@ export class AskUserWhichElementTool implements AgentTool<typeof selectElementSc
 
 			try {
 				// Inject using userScripts.execute (USER_SCRIPT world)
-				if (browser.userScripts && typeof browser.userScripts.execute === "function") {
+				if (chrome.userScripts && typeof chrome.userScripts.execute === "function") {
 					// Execute the script and get result
-					const executePromise = browser.userScripts.execute({
+					const executePromise = chrome.userScripts.execute({
 						target: { tabId: tab.id, allFrames: false },
 						world: "USER_SCRIPT",
 						injectImmediately: true,
@@ -584,9 +580,9 @@ export class AskUserWhichElementTool implements AgentTool<typeof selectElementSc
 								signal.addEventListener("abort", () => {
 									// Try to cleanup overlay when aborted
 									const cleanupCode = `window.dispatchEvent(new CustomEvent("sitegeist-element-cancel"));`;
-									browser.userScripts
+									chrome.userScripts
 										?.execute({
-											target: { tabId: tab.id, allFrames: false },
+											target: { tabId: tab.id!, allFrames: false },
 											world: "USER_SCRIPT",
 											injectImmediately: true,
 											js: [{ code: cleanupCode }],

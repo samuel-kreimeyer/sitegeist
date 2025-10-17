@@ -1,10 +1,6 @@
 import type { SandboxRuntimeProvider } from "@mariozechner/pi-web-ui";
 import { RUNTIME_MESSAGE_ROUTER, RuntimeMessageBridge } from "@mariozechner/pi-web-ui";
 
-// Cross-browser API compatibility
-// @ts-expect-error - browser global exists in Firefox, chrome in Chrome
-const browser = globalThis.browser || globalThis.chrome;
-
 export interface UserScriptsCheckResult {
 	available: boolean;
 	message?: string;
@@ -26,16 +22,16 @@ export async function requestUserScriptsPermission(): Promise<{
 	const isFirefox = !isChrome;
 
 	// Check if API is already available
-	if (browser.userScripts) {
+	if (chrome.userScripts) {
 		return { granted: true };
 	}
 
 	// Firefox: Request userScripts permission
-	if (isFirefox && browser.permissions) {
+	if (isFirefox && chrome.permissions) {
 		try {
 			// CRITICAL: Call request() synchronously (no await before it) to preserve user gesture context!
 			// Any async operation before this call will break the user gesture chain.
-			const grantedPromise = browser.permissions.request({
+			const grantedPromise = chrome.permissions.request({
 				permissions: ["userScripts"],
 			});
 
@@ -93,7 +89,7 @@ export async function requestUserScriptsPermission(): Promise<{
  * For Firefox, attempts to request the permission if not granted.
  */
 export async function checkUserScriptsAvailability(): Promise<UserScriptsCheckResult> {
-	if (browser.userScripts) {
+	if (chrome.userScripts) {
 		return { available: true };
 	}
 
