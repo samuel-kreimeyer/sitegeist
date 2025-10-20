@@ -38,10 +38,47 @@ const getSandboxUrl = () => {
 };
 
 /**
+ * Check if library code contains navigation attempts.
+ * Returns { hasNavigation: false } or { hasNavigation: true, warning: string }
+ */
+function checkForNavigation(code: string): { hasNavigation: boolean; warning?: string } {
+	// Library code runs inside browserjs() - ANY navigation will break execution
+	// Navigation must be done in the REPL script using navigate() before calling browserjs()
+	const navigationPatterns = [
+		/window\.location\s*=/, // window.location = ...
+		/window\.location\.\w+\s*=/, // window.location.href = ..., window.location.pathname = ...
+		/window\.location\.(assign|replace|reload)\s*\(/, // window.location.assign(...), replace(...), reload()
+		/\blocation\s*=/, // location = ...
+		/\blocation\.\w+\s*=/, // location.href = ..., location.pathname = ...
+		/\blocation\.(assign|replace|reload)\s*\(/, // location.assign(...), replace(...), reload()
+		/\bnavigate\s*\(/, // navigate(...)
+		/history\.(pushState|replaceState)\s*\(/, // history.pushState/replaceState
+	];
+
+	for (const pattern of navigationPatterns) {
+		if (pattern.test(code)) {
+			return {
+				hasNavigation: true,
+				warning:
+					"Library code must NOT contain navigation logic. Library code runs inside browserjs() which breaks execution on navigation. Navigation must be performed in the REPL script by calling navigate() BEFORE calling browserjs().",
+			};
+		}
+	}
+
+	return { hasNavigation: false };
+}
+
+/**
  * Validate JavaScript syntax using sandboxed iframe (CSP-compliant).
  * Returns { valid: true } or { valid: false, error: string }
  */
 async function validateJavaScriptSyntax(code: string): Promise<{ valid: boolean; error?: string }> {
+	// First check for navigation attempts
+	const navCheck = checkForNavigation(code);
+	if (navCheck.hasNavigation) {
+		return { valid: false, error: navCheck.warning };
+	}
+
 	const sandbox = new SandboxIframe();
 	sandbox.sandboxUrlProvider = getSandboxUrl;
 	sandbox.style.display = "none";
@@ -160,369 +197,270 @@ export const skillTool: AgentTool<typeof skillParamsSchema, any> = {
 	description: SKILL_TOOL_DESCRIPTION,
 	parameters: skillParamsSchema,
 	execute: async (_toolCallId: string, args: SkillParams) => {
-		try {
-			const skillsRepo = getSkills();
-			const [tab] = await chrome.tabs.query({
-				active: true,
-				currentWindow: true,
-			});
-			const currentUrl = tab?.url || "";
+		const skillsRepo = getSkills();
+		const [tab] = await chrome.tabs.query({
+			active: true,
+			currentWindow: true,
+		});
+		const currentUrl = tab?.url || "";
 
-			switch (args.action) {
-				case "get": {
-					if (!args.name) {
-						return {
-							output: "Missing 'name' parameter for get action.",
-							isError: true,
-							details: {},
-						};
-					}
-
-					const skill = await skillsRepo.getSkill(args.name);
-					if (!skill) {
-						// Return list of available skills for current domain
-						const available = await skillsRepo.listSkills(currentUrl);
-						if (available.length === 0) {
-							return {
-								output: `Skill '${args.name}' not found. No skills available for current domain.`,
-								isError: true,
-								details: {},
-							};
-						}
-						const list = available.map((s) => `${s.name}: ${s.shortDescription}`).join("\n");
-						return {
-							output: `Skill '${args.name}' not found. Available skills:\n${list}`,
-							isError: true,
-							details: {},
-						};
-					}
-
-					// Build output based on includeLibraryCode flag
-					const domainsStr = skill.domainPatterns.join(", ");
-					let llmOutput = `${skill.name} (${domainsStr})\n${skill.description}\n\nExamples:\n${skill.examples}`;
-
-					// Only include library code if explicitly requested
-					if (args.includeLibraryCode) {
-						llmOutput += `\n\nLibrary:\n${skill.library}`;
-					}
-
-					return {
-						output: llmOutput,
-						isError: false,
-						details: skill,
-					};
+		switch (args.action) {
+			case "get": {
+				if (!args.name) {
+					throw new Error("Missing 'name' parameter for get action.");
 				}
 
-				case "list": {
-					// Determine which URL to use for filtering
-					// args.url === undefined -> use current tab URL (default)
-					// args.url === "" -> list ALL skills (no filtering)
-					// args.url === "https://..." -> use specified URL
-					const filterUrl = args.url === undefined ? currentUrl : args.url === "" ? undefined : args.url;
-
-					const skillList = await skillsRepo.listSkills(filterUrl);
-					if (skillList.length === 0) {
-						const msg = filterUrl ? "No skills found for specified domain." : "No skills found.";
-						return { output: msg, isError: false, details: { skills: [] } };
+				const skill = await skillsRepo.getSkill(args.name);
+				if (!skill) {
+					// Return list of available skills for current domain
+					const available = await skillsRepo.listSkills(currentUrl);
+					if (available.length === 0) {
+						throw new Error(`Skill '${args.name}' not found. No skills available for current domain.`);
 					}
-
-					// Token-efficient list for LLM: name: short description
-					const llmOutput = skillList.map((s) => `${s.name}: ${s.shortDescription}`).join("\n");
-					return {
-						output: llmOutput,
-						isError: false,
-						details: { skills: skillList },
-					};
+					const list = available.map((s) => `${s.name}: ${s.shortDescription}`).join("\n");
+					throw new Error(`Skill '${args.name}' not found. Available skills:\n${list}`);
 				}
 
-				case "create": {
-					if (!args.data) {
-						return {
-							output: "Missing 'data' parameter for create.",
-							isError: true,
-							details: {},
-						};
-					}
+				// Build output based on includeLibraryCode flag
+				const domainsStr = skill.domainPatterns.join(", ");
+				let llmOutput = `${skill.name} (${domainsStr})\n${skill.description}\n\nExamples:\n${skill.examples}`;
 
-					// Check if already exists
-					const existing = await skillsRepo.getSkill(args.data.name);
-					if (existing) {
-						return {
-							output: `Skill '${args.data.name}' already exists. Use update action to modify.`,
-							isError: true,
-							details: {},
-						};
-					}
-
-					// Validate syntax using sandboxed iframe (CSP-compliant)
-					/*const validation = await validateJavaScriptSyntax(args.data.library);
-					if (!validation.valid) {
-						return {
-							output: `Syntax error in library: ${validation.error}`,
-							isError: true,
-							details: {},
-						};
-					}*/
-
-					const now = new Date().toISOString();
-					const newSkill: Skill = {
-						name: args.data.name,
-						domainPatterns: args.data.domainPatterns,
-						shortDescription: args.data.shortDescription,
-						description: args.data.description,
-						createdAt: now,
-						lastUpdated: now,
-						examples: args.data.examples,
-						library: args.data.library,
-					};
-
-					await skillsRepo.saveSkill(newSkill);
-
-					return {
-						output: `Skill '${args.data.name}' created.`,
-						isError: false,
-						details: newSkill,
-					};
+				// Only include library code if explicitly requested
+				if (args.includeLibraryCode) {
+					llmOutput += `\n\nLibrary:\n${skill.library}`;
 				}
 
-				case "rewrite": {
-					if (!args.name) {
-						return {
-							output: "Missing 'name' parameter for rewrite.",
-							isError: true,
-							details: {},
-						};
-					}
-					if (!args.data) {
-						return {
-							output: "Missing 'data' parameter for rewrite.",
-							isError: true,
-							details: {},
-						};
-					}
+				return {
+					output: llmOutput,
+					details: skill,
+				};
+			}
 
-					const existing = await skillsRepo.getSkill(args.name);
-					if (!existing) {
-						return {
-							output: `Skill '${args.name}' not found. Use create action.`,
-							isError: true,
-							details: {},
-						};
-					}
+			case "list": {
+				// Determine which URL to use for filtering
+				// args.url === undefined -> use current tab URL (default)
+				// args.url === "" -> list ALL skills (no filtering)
+				// args.url === "https://..." -> use specified URL
+				const filterUrl = args.url === undefined ? currentUrl : args.url === "" ? undefined : args.url;
 
-					// Validate library syntax if provided (using sandboxed iframe)
-					if (args.data.library) {
-						const validation = await validateJavaScriptSyntax(args.data.library);
-						if (!validation.valid) {
-							return {
-								output: `Syntax error in library: ${validation.error}`,
-								isError: true,
-								details: {},
-							};
-						}
-					}
-
-					// Check if name is being changed
-					const newName = args.data.name;
-					if (newName && newName !== existing.name) {
-						const existingWithNewName = await skillsRepo.getSkill(newName);
-						if (existingWithNewName) {
-							return {
-								output: `Rewrite failed: Skill with name '${newName}' already exists.`,
-								isError: true,
-								details: {},
-							};
-						}
-					}
-
-					// Merge with existing (rewrite provided fields)
-					const updated: Skill = {
-						...existing,
-						...args.data,
-						name: newName || existing.name, // Allow name change
-						createdAt: existing.createdAt, // Keep original creation date
-						lastUpdated: new Date().toISOString(),
-					};
-
-					// If name changed, delete old and save with new name
-					if (newName && newName !== existing.name) {
-						await skillsRepo.deleteSkill(args.name);
-					}
-					await skillsRepo.saveSkill(updated);
-
-					return {
-						output: `Skill '${args.name}' rewritten.`,
-						isError: false,
-						details: updated,
-					};
+				const skillList = await skillsRepo.listSkills(filterUrl);
+				if (skillList.length === 0) {
+					const msg = filterUrl ? "No skills found for specified domain." : "No skills found.";
+					return { output: msg, details: { skills: [] } };
 				}
 
-				case "update": {
-					if (!args.name) {
-						return {
-							output: "Missing 'name' parameter for update.",
-							isError: true,
-							details: {},
-						};
-					}
-					if (!args.updates) {
-						return {
-							output: "Missing 'updates' parameter for update.",
-							isError: true,
-							details: {},
-						};
-					}
+				// Token-efficient list for LLM: name: short description
+				const llmOutput = skillList.map((s) => `${s.name}: ${s.shortDescription}`).join("\n");
+				return {
+					output: llmOutput,
+					details: { skills: skillList },
+				};
+			}
 
-					const existing = await skillsRepo.getSkill(args.name);
-					if (!existing) {
-						return {
-							output: `Skill '${args.name}' not found. Use create action.`,
-							isError: true,
-							details: {},
-						};
-					}
-
-					// Apply updates to each field
-					const updated: Skill = { ...existing };
-					let newName: string | undefined;
-
-					if (args.updates.name) {
-						const { old_string, new_string } = args.updates.name;
-						if (!updated.name.includes(old_string)) {
-							return {
-								output: `Update failed: old_string not found in name field.`,
-								isError: true,
-								details: {},
-							};
-						}
-						newName = updated.name.replace(old_string, new_string);
-						// Check if new name already exists
-						const existingWithNewName = await skillsRepo.getSkill(newName);
-						if (existingWithNewName) {
-							return {
-								output: `Update failed: Skill with name '${newName}' already exists.`,
-								isError: true,
-								details: {},
-							};
-						}
-						updated.name = newName;
-					}
-
-					if (args.updates.shortDescription) {
-						const { old_string, new_string } = args.updates.shortDescription;
-						if (!updated.shortDescription.includes(old_string)) {
-							return {
-								output: `Update failed: old_string not found in shortDescription field.`,
-								isError: true,
-								details: {},
-							};
-						}
-						updated.shortDescription = updated.shortDescription.replace(old_string, new_string);
-					}
-
-					if (args.updates.domainPatterns) {
-						const { old_string, new_string } = args.updates.domainPatterns;
-						updated.domainPatterns = updated.domainPatterns.map((pattern) =>
-							pattern.replace(old_string, new_string),
-						);
-					}
-
-					if (args.updates.library) {
-						const { old_string, new_string } = args.updates.library;
-						if (!updated.library.includes(old_string)) {
-							return {
-								output: `Update failed: old_string not found in library field.`,
-								isError: true,
-								details: {},
-							};
-						}
-						updated.library = updated.library.replace(old_string, new_string);
-
-						// Validate updated library syntax
-						const validation = await validateJavaScriptSyntax(updated.library);
-						if (!validation.valid) {
-							return {
-								output: `Update failed: Syntax error in updated library: ${validation.error}`,
-								isError: true,
-								details: {},
-							};
-						}
-					}
-
-					if (args.updates.description) {
-						const { old_string, new_string } = args.updates.description;
-						if (!updated.description.includes(old_string)) {
-							return {
-								output: `Update failed: old_string not found in description field.`,
-								isError: true,
-								details: {},
-							};
-						}
-						updated.description = updated.description.replace(old_string, new_string);
-					}
-
-					if (args.updates.examples) {
-						const { old_string, new_string } = args.updates.examples;
-						if (!updated.examples.includes(old_string)) {
-							return {
-								output: `Update failed: old_string not found in examples field.`,
-								isError: true,
-								details: {},
-							};
-						}
-						updated.examples = updated.examples.replace(old_string, new_string);
-					}
-
-					updated.lastUpdated = new Date().toISOString();
-
-					// If name changed, delete old and save with new name
-					if (newName) {
-						await skillsRepo.deleteSkill(args.name);
-					}
-					await skillsRepo.saveSkill(updated);
-
-					return {
-						output: `Skill '${args.name}' updated.`,
-						isError: false,
-						details: updated,
-					};
+			case "create": {
+				if (!args.data) {
+					throw new Error("Missing 'data' parameter for create.");
 				}
 
-				case "delete": {
-					if (!args.name) {
-						return {
-							output: "Missing 'name' parameter for delete.",
-							isError: true,
-							details: {},
-						};
-					}
+				// Check if already exists
+				const existing = await skillsRepo.getSkill(args.data.name);
+				if (existing) {
+					throw new Error(`Skill '${args.data.name}' already exists. Use update action to modify.`);
+				}
 
-					const existing = await skillsRepo.getSkill(args.name);
-					if (!existing) {
-						return {
-							output: `Skill '${args.name}' not found.`,
-							isError: false,
-							details: {},
-						};
-					}
+				const now = new Date().toISOString();
+				const newSkill: Skill = {
+					name: args.data.name,
+					domainPatterns: args.data.domainPatterns,
+					shortDescription: args.data.shortDescription,
+					description: args.data.description,
+					createdAt: now,
+					lastUpdated: now,
+					examples: args.data.examples,
+					library: args.data.library,
+				};
 
+				// Validate final library code before saving
+				const validation = await validateJavaScriptSyntax(newSkill.library);
+				if (!validation.valid) {
+					throw new Error(validation.error);
+				}
+
+				await skillsRepo.saveSkill(newSkill);
+
+				return {
+					output: `Skill '${args.data.name}' created.`,
+					details: newSkill,
+				};
+			}
+
+			case "rewrite": {
+				if (!args.name) {
+					throw new Error("Missing 'name' parameter for rewrite.");
+				}
+				if (!args.data) {
+					throw new Error("Missing 'data' parameter for rewrite.");
+				}
+
+				const existing = await skillsRepo.getSkill(args.name);
+				if (!existing) {
+					throw new Error(`Skill '${args.name}' not found. Use create action.`);
+				}
+
+				// Check if name is being changed
+				const newName = args.data.name;
+				if (newName && newName !== existing.name) {
+					const existingWithNewName = await skillsRepo.getSkill(newName);
+					if (existingWithNewName) {
+						throw new Error(`Rewrite failed: Skill with name '${newName}' already exists.`);
+					}
+				}
+
+				// Merge with existing (rewrite provided fields)
+				const updated: Skill = {
+					...existing,
+					...args.data,
+					name: newName || existing.name, // Allow name change
+					createdAt: existing.createdAt, // Keep original creation date
+					lastUpdated: new Date().toISOString(),
+				};
+
+				// Validate final library code before saving
+				const validation = await validateJavaScriptSyntax(updated.library);
+				if (!validation.valid) {
+					throw new Error(validation.error);
+				}
+
+				// If name changed, delete old and save with new name
+				if (newName && newName !== existing.name) {
 					await skillsRepo.deleteSkill(args.name);
-					return {
-						output: `Skill '${args.name}' deleted.`,
-						isError: false,
-						details: { name: args.name },
-					};
+				}
+				await skillsRepo.saveSkill(updated);
+
+				return {
+					output: `Skill '${args.name}' rewritten.`,
+					details: updated,
+				};
+			}
+
+			case "update": {
+				if (!args.name) {
+					throw new Error("Missing 'name' parameter for update.");
+				}
+				if (!args.updates) {
+					throw new Error("Missing 'updates' parameter for update.");
 				}
 
-				default:
+				const existing = await skillsRepo.getSkill(args.name);
+				if (!existing) {
+					throw new Error(`Skill '${args.name}' not found. Use create action.`);
+				}
+
+				// Apply updates to each field
+				const updated: Skill = { ...existing };
+				let newName: string | undefined;
+
+				if (args.updates.name) {
+					const { old_string, new_string } = args.updates.name;
+					if (!updated.name.includes(old_string)) {
+						throw new Error("Update failed: old_string not found in name field.");
+					}
+					newName = updated.name.replace(old_string, new_string);
+					// Check if new name already exists
+					const existingWithNewName = await skillsRepo.getSkill(newName);
+					if (existingWithNewName) {
+						throw new Error(`Update failed: Skill with name '${newName}' already exists.`);
+					}
+					updated.name = newName;
+				}
+
+				if (args.updates.shortDescription) {
+					const { old_string, new_string } = args.updates.shortDescription;
+					if (!updated.shortDescription.includes(old_string)) {
+						throw new Error("Update failed: old_string not found in shortDescription field.");
+					}
+					updated.shortDescription = updated.shortDescription.replace(old_string, new_string);
+				}
+
+				if (args.updates.domainPatterns) {
+					const { old_string, new_string } = args.updates.domainPatterns;
+					updated.domainPatterns = updated.domainPatterns.map((pattern) =>
+						pattern.replace(old_string, new_string),
+					);
+				}
+
+				if (args.updates.library) {
+					const { old_string, new_string } = args.updates.library;
+					if (!updated.library.includes(old_string)) {
+						throw new Error("Update failed: old_string not found in library field.");
+					}
+					updated.library = updated.library.replace(old_string, new_string);
+
+					// Validate updated library syntax
+					const validation = await validateJavaScriptSyntax(updated.library);
+					if (!validation.valid) {
+						throw new Error(`Update failed: Syntax error in updated library: ${validation.error}`);
+					}
+				}
+
+				if (args.updates.description) {
+					const { old_string, new_string } = args.updates.description;
+					if (!updated.description.includes(old_string)) {
+						throw new Error("Update failed: old_string not found in description field.");
+					}
+					updated.description = updated.description.replace(old_string, new_string);
+				}
+
+				if (args.updates.examples) {
+					const { old_string, new_string } = args.updates.examples;
+					if (!updated.examples.includes(old_string)) {
+						throw new Error("Update failed: old_string not found in examples field.");
+					}
+					updated.examples = updated.examples.replace(old_string, new_string);
+				}
+
+				updated.lastUpdated = new Date().toISOString();
+
+				// Validate final library code before saving
+				const finalValidation = await validateJavaScriptSyntax(updated.library);
+				if (!finalValidation.valid) {
+					throw new Error(finalValidation.error);
+				}
+
+				// If name changed, delete old and save with new name
+				if (newName) {
+					await skillsRepo.deleteSkill(args.name);
+				}
+				await skillsRepo.saveSkill(updated);
+
+				return {
+					output: `Skill '${args.name}' updated.`,
+					details: updated,
+				};
+			}
+
+			case "delete": {
+				if (!args.name) {
+					throw new Error("Missing 'name' parameter for delete.");
+				}
+
+				const existing = await skillsRepo.getSkill(args.name);
+				if (!existing) {
 					return {
-						output: `Unknown action: ${(args as any).action}`,
-						isError: true,
+						output: `Skill '${args.name}' not found.`,
 						details: {},
 					};
+				}
+
+				await skillsRepo.deleteSkill(args.name);
+				return {
+					output: `Skill '${args.name}' deleted.`,
+					details: { name: args.name },
+				};
 			}
-		} catch (error: any) {
-			return { output: `Error: ${error.message}`, isError: true, details: {} };
+
+			default:
+				throw new Error(`Unknown action: ${(args as any).action}`);
 		}
 	},
 };
