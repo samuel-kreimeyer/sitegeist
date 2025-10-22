@@ -3,7 +3,7 @@
 	"minimum_chrome_version": "138",
 	"name": "sitegeist",
 	"description": "Your AI companion for the web - Research, automate, create",
-	"version": "0.5.43",
+	"version": "0.6.0",
 	"action": {
 		"default_title": "Click to open side panel"
 	},

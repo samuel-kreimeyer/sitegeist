@@ -1,6 +1,6 @@
 import { Button, Input, icon } from "@mariozechner/mini-lit";
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
-import { type AgentTool, getModel } from "@mariozechner/pi-ai";
+import { type AgentTool, getModel, type Model } from "@mariozechner/pi-ai";
 import {
 	Agent,
 	type AgentState,
@@ -62,6 +62,15 @@ let agent: Agent;
 let chatPanel: ChatPanel;
 let agentUnsubscribe: (() => void) | undefined;
 let currentWindowId: number;
+
+// Track which skills we've shown in full (skillName -> lastUpdated timestamp)
+// Reset when a new session/agent is created
+const shownSkills = new Map<string, string>();
+
+// Export getter for message transformer
+export function getShownSkills(): Map<string, string> {
+	return shownSkills;
+}
 
 // ============================================================================
 // HELPERS
@@ -184,6 +193,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		agentUnsubscribe();
 	}
 
+	// Reset skill tracking for new session
+	shownSkills.clear();
+
 	// Load debugger mode setting
 	const stored = await chrome.storage.local.get("debuggerMode");
 	const debuggerModeEnabled = stored.debuggerMode || false;
@@ -197,12 +209,11 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 	// Determine default model (last used model or fallback to Sonnet)
 	let defaultModel = getModel("anthropic", "claude-haiku-4-5-20251001");
 	if (!initialState?.model) {
-		const savedProvider = await storage.settings.get<string>("lastUsedModel.provider");
-		const savedModelId = await storage.settings.get<string>("lastUsedModel.modelId");
+		const savedModel = await storage.settings.get<Model<any>>("lastUsedModel");
 
-		if (savedProvider && savedModelId) {
+		if (savedModel) {
 			try {
-				defaultModel = getModel(savedProvider as any, savedModelId);
+				defaultModel = savedModel;
 			} catch (error) {
 				console.warn("Failed to restore saved model, using default:", error);
 			}
@@ -229,11 +240,8 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 				// Save last used model when it changes
 				if (event.state.model) {
 					storage.settings
-						.set("lastUsedModel.provider", event.state.model.provider)
-						.catch((err) => console.error("Failed to save lastUsedModel.provider:", err));
-					storage.settings
-						.set("lastUsedModel.modelId", event.state.model.id)
-						.catch((err) => console.error("Failed to save lastUsedModel.modelId:", err));
+						.set("lastUsedModel", event.state.model)
+						.catch((err) => console.error("Failed to save lastUsedModel:", err));
 				}
 
 				// Generate title after first successful response
@@ -678,7 +686,12 @@ async function initApp() {
 	const proxyEnabled = await storage.settings.get<boolean>("proxy.enabled");
 	if (proxyEnabled === null) {
 		await storage.settings.set("proxy.enabled", true);
-		await storage.settings.set("proxy.url", "https://corsproxy.io");
+		await storage.settings.set("proxy.url", "https://proxy.mariozechner.at/proxy");
+	} else {
+		const proxyUrl = await storage.settings.get<string>("proxy.url");
+		if (proxyUrl === "https://corsproxy.io/" || !proxyUrl) {
+			await storage.settings.set("proxy.url", "https://proxy.mariozechner.at/proxy");
+		}
 	}
 
 	// Create ChatPanel

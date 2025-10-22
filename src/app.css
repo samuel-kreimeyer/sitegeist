@@ -11,7 +11,7 @@
 
 /* Tell Tailwind to scan local components */
 /* biome-ignore lint/suspicious/noUnknownAtRules: Tailwind 4 source directive */
-@source "./src";
+@source "../src/**/*.ts";
 
 /* Import Tailwind */
 /* biome-ignore lint/correctness/noInvalidPositionAtImportRule: fuck you */

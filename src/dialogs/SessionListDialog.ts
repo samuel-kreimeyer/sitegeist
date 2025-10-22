@@ -318,7 +318,7 @@ export class SitegeistSessionListDialog extends DialogBase {
 						};
 
 						// Save with updated metadata
-						await storage.sessions.saveSession(metadata.id, session, updatedMetadata);
+						await storage.sessions.save(session, updatedMetadata);
 						imported++;
 					} catch (err) {
 						console.error(`Failed to import session ${metadata.title}:`, err);

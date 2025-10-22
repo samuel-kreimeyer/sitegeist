@@ -61,30 +61,27 @@ const proxyEnabled = await storage.settings.get<boolean>("proxy.enabled");
 
 // Set proxy configuration
 await storage.settings.set("proxy.enabled", true);
-await storage.settings.set("proxy.url", "https://corsproxy.io");
+await storage.settings.set("proxy.url", "https://proxy.mariozechner.at/proxy");
 ```
 
 ### Last Used Model
 
 Stores the most recently selected model to restore on new sessions:
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `lastUsedModel.provider` | `string` | Provider name (e.g., "anthropic", "openai") |
-| `lastUsedModel.modelId` | `string` | Model ID (e.g., "claude-sonnet-4-5-20250929") |
+| Key | Type |
+|-----|------|
+| `lastUsedModel` | `Model<any>` |
 
 **Example:**
 ```typescript
 // Save last used model
-await storage.settings.set("lastUsedModel.provider", "anthropic");
-await storage.settings.set("lastUsedModel.modelId", "claude-sonnet-4-5-20250929");
+await storage.settings.set("lastUsedModel", model);
 
 // Restore last used model
-const provider = await storage.settings.get<string>("lastUsedModel.provider");
-const modelId = await storage.settings.get<string>("lastUsedModel.modelId");
+const model = await storage.settings.get<string>("lastUsedModel");
 
-if (provider && modelId) {
-  const model = getModel(provider as any, modelId);
+if (model) {
+  ...
 }
 ```
 
@@ -209,7 +206,7 @@ if (modelId) {
 Always have sensible defaults when settings are missing:
 
 ```typescript
-const proxyUrl = await storage.settings.get<string>("proxy.url") ?? "https://corsproxy.io";
+const proxyUrl = await storage.settings.get<string>("proxy.url") ?? "https://proxy.mariozechner.at/proxy";
 const proxyEnabled = await storage.settings.get<boolean>("proxy.enabled") ?? false;
 ```
 
@@ -359,7 +356,7 @@ interface ProxyConfig {
 // Write
 const config: ProxyConfig = {
   enabled: true,
-  url: "https://corsproxy.io",
+  url: "https://proxy.mariozechner.at/proxy",
   timeout: 5000,
 };
 await storage.settings.set("proxy", config);

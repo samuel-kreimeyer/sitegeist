@@ -29,7 +29,7 @@
 
         <!-- Signup Card -->
         <div class="p-8 mb-26 text-center">
-            <h2 class="text-2xl font-bold mb-4">Join the Waitlist</h2>
+            <h2 class="text-2xl font-bold mb-4">Join the <span class="inline-block bg-gradient-to-r from-orange-600 to-yellow-400 bg-clip-text text-transparent">Waitlist</span></h2>
 
             <form class="flex flex-col md:flex-row gap-3 max-w-md mx-auto" id="signup-form">
                 <input
@@ -55,15 +55,28 @@
 
         <!-- Explainer -->
         <div class="mb-26 text-center max-w-2xl mx-auto">
-            <h2 class="text-3xl font-bold mb-6">What is Sitegeist?</h2>
+            <h2 class="text-3xl font-bold mb-6">What is <span class="inline-block bg-gradient-to-r from-orange-600 to-yellow-400 bg-clip-text text-transparent">Sitegeist</span>?</h2>
             <p class="text-lg text-muted-foreground mb-4">
                 An AI assistant that lives in your browser. Built for collaboration, not autonomy theater. You guide, it executes. Automate repetitive web tasks, extract data from any website, and transform it into whatever you need.
             </p>
         </div>
 
+        <!-- Cookie Calculator Example -->
+        <div class="mb-26 text-center max-w-2xl mx-auto">
+            <h2 class="text-3xl font-bold mb-6">Cookie ingredient calculator? <span class="inline-block bg-gradient-to-r from-orange-600 to-yellow-400 bg-clip-text text-transparent">Sure.</span></h2>
+            <div class="flex justify-center mb-4">
+                <video controls class="w-full rounded-lg" style="max-width: 800px;" preload="metadata">
+                    <source src="https://sink.mariozechner.at/api/share/5a12c9a8b50070c13e44e4f7032cced5/file/cookies.mp4" type="video/mp4">
+                </video>
+            </div>
+            <p class="text-xs text-muted-foreground">
+                Video not sped up. Apologies to cookie connoisseurs. <a href="https://sink.mariozechner.at/api/share/07753395e775be9373b7c0937bff0ba9/file/cookies-gerpertee.mp4" target="_blank" class="underline hover:text-foreground">Watch ChatGPT Atlas try to do the same</a>
+            </p>
+        </div>
+
         <!-- What You Can Do -->
         <div class="mb-16">
-            <h2 class="text-3xl font-bold text-center mb-12">What You Can Do</h2>
+            <h2 class="text-3xl font-bold text-center mb-12">But wait, there's <span class="inline-block bg-gradient-to-r from-orange-600 to-yellow-400 bg-clip-text text-transparent">more</span></h2>
 
             <div class="space-y-24 max-w-4xl mx-auto">
                 <!-- Use Case 1 -->
@@ -174,14 +187,35 @@
                 <!-- Call to Action -->
                 <div class="text-center py-16">
                     <p class="text-4xl md:text-5xl font-bold mb-3 inline-block bg-gradient-to-r from-orange-600 to-yellow-400 bg-clip-text text-transparent">Your turn.</p>
-                    <p class="text-xl md:text-2xl text-muted-foreground">What will you <span class="rotating-word" id="cta-word">automate</span>?</p>
+                    <p class="text-xl md:text-2xl text-muted-foreground mb-8">What will you <span class="rotating-word" id="cta-word">automate</span>?</p>
+
+                    <!-- Signup Form -->
+                    <form class="flex flex-col md:flex-row gap-3 max-w-md mx-auto" id="signup-form-bottom">
+                        <input
+                            type="email"
+                            class="flex-1 px-4 py-3 rounded-lg border border-input bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-orange-500/50"
+                            placeholder="you@example.com"
+                            required
+                            autocomplete="email"
+                        />
+                        <button type="submit" class="signup-btn px-6 py-3 font-medium rounded-lg bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/50 text-foreground transition-all hover:shadow-lg hover:shadow-orange-500/20">Notify Me</button>
+                    </form>
+                    <p class="text-xs text-muted-foreground mt-3">Your email will be deleted immediately after we notify you.</p>
+
+                    <div class="success-message" id="success-message-bottom">
+                        ✓ Thanks! We'll notify you when we launch.
+                    </div>
+
+                    <div class="error-message" id="error-message-bottom">
+                        <!-- Error message will be inserted here -->
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Features -->
         <div class="mb-16 max-w-3xl mx-auto">
-            <h2 class="text-3xl font-bold text-center mb-12">We Don't Want Your Data</h2>
+            <h2 class="text-3xl font-bold text-center mb-12">We Don't Want <span class="inline-block bg-gradient-to-r from-orange-600 to-yellow-400 bg-clip-text text-transparent">Your Data</span></h2>
             <div class="grid md:grid-cols-2 gap-6">
                 <!-- Feature 1 -->
                 <div class="p-6 border border-border rounded-lg">
@@ -333,6 +367,9 @@
         <!-- Footer -->
         <footer class="text-center text-muted-foreground text-sm mt-12">
             <p>© 2025 Sitegeist - Made by <a href="https://mariozechner.at" class="text-foreground underline">Mario Zechner</a></p>
+            <p class="text-xs text-muted-foreground mt-4">
+                This page respects your privacy by not using cookies or similar technologies and not collecting any personally identifiable information.
+            </p>
         </footer>
     </div>
 

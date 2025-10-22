@@ -38,11 +38,17 @@ echo "🌐 Starting sitegeist dev server..."
 npm run dev &
 SITEGEIST_PID=$!
 
+echo "🏠 Starting sitegeist site dev server..."
+(cd site && ./run.sh dev) &
+SITE_PID=$!
+
 echo ""
 echo "✅ All dev servers started!"
 echo "   - mini-lit: PID $MINI_LIT_PID"
 echo "   - pi-mono: PID $PI_MONO_PID"
 echo "   - sitegeist: PID $SITEGEIST_PID"
+echo "   - site (backend): http://localhost:3000"
+echo "   - site (frontend): http://localhost:8080"
 echo ""
 echo "Press Ctrl+C to stop all servers"
 echo ""

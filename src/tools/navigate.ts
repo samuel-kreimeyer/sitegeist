@@ -9,6 +9,7 @@ import { TabPill } from "../components/TabPill.js";
 import { NAVIGATE_TOOL_DESCRIPTION } from "../prompts/prompts.js";
 import { getSitegeistStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
+import { formatSkills } from "../utils/format-skills.js";
 import "../utils/i18n-extension.js";
 
 // Track tool-initiated navigations to filter out duplicate navigation messages
@@ -57,7 +58,7 @@ export interface NavigateResult {
 	title?: string;
 	favicon?: string;
 	tabId?: number;
-	skills?: Array<{ name: string; shortDescription: string }>;
+	skills?: Array<{ name: string; shortDescription: string; fullDetails?: Skill }>;
 	tabs?: TabInfo[];
 	switchedToTab?: number;
 }
@@ -144,10 +145,20 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 		// Get skills for the final URL
 		const skillsRepo = getSitegeistStorage().skills;
 		const matchingSkills = await skillsRepo.getSkillsForUrl(finalUrl);
-		const skills = matchingSkills.map((s) => ({
-			name: s.name,
-			shortDescription: s.shortDescription,
-		}));
+		const { newOrUpdated, unchanged, formattedText: skillsOutput } = formatSkills(matchingSkills);
+
+		// Build skills array with full details for new/updated
+		const skills = [
+			...newOrUpdated.map((s) => ({
+				name: s.name,
+				shortDescription: s.shortDescription,
+				fullDetails: s,
+			})),
+			...unchanged.map((s) => ({
+				name: s.name,
+				shortDescription: s.shortDescription,
+			})),
+		];
 
 		const details: NavigateResult = {
 			finalUrl,
@@ -165,14 +176,7 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 			output = `Navigated to: ${finalUrl} (tab ${targetTabId})\n`;
 		}
 
-		if (skills.length > 0) {
-			output += "Available skills:\n";
-			for (const skill of skills) {
-				output += `  - ${skill.name}: ${skill.shortDescription}\n`;
-			}
-		} else {
-			output += "No skills found for domain";
-		}
+		output += `\n${skillsOutput}`;
 
 		return { output, details };
 	}
@@ -397,10 +401,20 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 		// Get skills for the tab's URL
 		const skillsRepo = getSitegeistStorage().skills;
 		const matchingSkills = finalUrl ? await skillsRepo.getSkillsForUrl(finalUrl) : [];
-		const skills = matchingSkills.map((s) => ({
-			name: s.name,
-			shortDescription: s.shortDescription,
-		}));
+		const { newOrUpdated, unchanged, formattedText: skillsOutput } = formatSkills(matchingSkills);
+
+		// Build skills array with full details for new/updated
+		const skills = [
+			...newOrUpdated.map((s) => ({
+				name: s.name,
+				shortDescription: s.shortDescription,
+				fullDetails: s,
+			})),
+			...unchanged.map((s) => ({
+				name: s.name,
+				shortDescription: s.shortDescription,
+			})),
+		];
 
 		const details: NavigateResult = {
 			finalUrl,
@@ -413,15 +427,7 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 
 		let output = `Switched to tab ${numericTabId}: ${title}\n`;
 		output += `URL: ${finalUrl}\n`;
-
-		if (skills.length > 0) {
-			output += "Available skills:\n";
-			for (const skill of skills) {
-				output += `  - ${skill.name}: ${skill.shortDescription}\n`;
-			}
-		} else {
-			output += "No skills found for domain";
-		}
+		output += `\n${skillsOutput}`;
 
 		return { output, details };
 	}

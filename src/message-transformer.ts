@@ -2,6 +2,7 @@ import type { Message } from "@mariozechner/pi-ai";
 import type { AppMessage } from "@mariozechner/pi-web-ui";
 import type { NavigationMessage } from "./messages/NavigationMessage.js";
 import { getSitegeistStorage } from "./storage/app-storage.js";
+import { formatSkills } from "./utils/format-skills.js";
 
 // Helper: Check if a message has toolCall blocks
 function hasToolCalls(msg: Message): boolean {
@@ -96,13 +97,7 @@ export async function browserMessageTransformer(messages: AppMessage[]): Promise
 
 			// Load skills matching this navigation URL
 			const skills = await skillsRepo.getSkillsForUrl(nav.url);
-			let skillsInfo = "";
-			if (skills.length > 0) {
-				const skillNames = skills.map((s) => `${s.name}: ${s.shortDescription}`).join("\n");
-				skillsInfo = `\nSkills: ${skillNames}`;
-			} else {
-				skillsInfo = "\nSkills: none found";
-			}
+			const { formattedText: skillsInfo } = formatSkills(skills);
 
 			transformed.push({
 				role: "user",
@@ -116,7 +111,6 @@ ${skillsInfo}
 </skills>
 
 <instructions>
-- READ THE SKILLS IMMEDIATELY BEFORE ANSWERING THE USER IF YOU HAVE NOT DONE SO ALREADY!
 - DO NOT STOP - This is informational only. CONTINUE IMMEDIATELY with the next step of your multi-step workflow. This message does NOT mean you should wait for user input.
 - DO NOT REPEAT THIS MESSAGE BACK TO THE USER!
 </instructions>`,
