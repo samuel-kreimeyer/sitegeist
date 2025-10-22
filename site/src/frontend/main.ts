@@ -1,18 +1,16 @@
-import type { ErrorResponse, SignupRequest, SignupResponse } from "../shared/types.js";
+import { createApiClient } from "./api-client.js";
+
+// Create API client
+const api = createApiClient("/api");
 
 // Handle both signup forms
-function setupSignupForm(
-	formId: string,
-	emailInputId: string,
-	successMessageId: string,
-	errorMessageId: string
-) {
+function setupSignupForm(formId: string, emailInputId: string, successMessageId: string, errorMessageId: string) {
 	const form = document.getElementById(formId) as HTMLFormElement;
 	if (!form) return;
 
 	const emailInput = emailInputId
-		? document.getElementById(emailInputId) as HTMLInputElement
-		: form.querySelector('input[type="email"]') as HTMLInputElement;
+		? (document.getElementById(emailInputId) as HTMLInputElement)
+		: (form.querySelector('input[type="email"]') as HTMLInputElement);
 	const successMessage = document.getElementById(successMessageId) as HTMLDivElement;
 	const errorMessage = document.getElementById(errorMessageId) as HTMLDivElement;
 	const submitButton = form.querySelector('button[type="submit"]') as HTMLButtonElement;
@@ -32,27 +30,14 @@ function setupSignupForm(
 		submitButton.textContent = "Submitting...";
 
 		try {
-			const response = await fetch("/api/signup", {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-				},
-				body: JSON.stringify({ email } satisfies SignupRequest),
-			});
-
-			const data = (await response.json()) as SignupResponse | ErrorResponse;
-
-			if (!response.ok) {
-				const errorData = data as ErrorResponse;
-				showError(errorMessage, successMessage, errorData.error || "Something went wrong. Please try again.");
-				return;
-			}
+			await api.signup({ email });
 
 			// Success!
 			showSuccess(form, successMessage, errorMessage);
 		} catch (error) {
 			console.error("Signup error:", error);
-			showError(errorMessage, successMessage, "Network error. Please check your connection and try again.");
+			const message = error instanceof Error ? error.message.replace("API error: ", "") : "Network error. Please try again.";
+			showError(errorMessage, successMessage, message);
 		} finally {
 			submitButton.disabled = false;
 			submitButton.textContent = "Notify Me";

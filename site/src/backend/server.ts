@@ -1,9 +1,11 @@
 import cors from "cors";
-import express, { type Request, type Response } from "express";
+import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { EmailSignup, ErrorResponse, SignupRequest, SignupResponse } from "../shared/types.js";
+import { createApiRouter } from "./api-server.js";
+import { createHandlers } from "./handlers.js";
 import { FileStore } from "./storage.js";
+import type { EmailSignup } from "../shared/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,9 +13,6 @@ const __dirname = path.dirname(__filename);
 const PORT = Number.parseInt(process.env.PORT || "3000", 10);
 const DATA_DIR = process.env.DATA_DIR || "./data";
 const isDevelopment = process.env.NODE_ENV !== "production";
-
-// Email validation regex (basic)
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 async function startServer() {
 	// Initialize email storage
@@ -27,6 +26,9 @@ async function startServer() {
 
 	console.log(`✓ Initialized email storage at ${signupsPath}`);
 
+	// Create API handlers
+	const handlers = createHandlers(signupsStore);
+
 	// Create Express app
 	const app = express();
 
@@ -34,68 +36,11 @@ async function startServer() {
 	app.use(cors());
 	app.use(express.json());
 
-	// API routes
+	// API routes (auto-generated from handlers)
+	const apiRouter = express.Router();
+	createApiRouter(apiRouter, handlers);
 
-	// Health check
-	app.get("/api/health", (_req, res) => {
-		res.json({
-			status: "healthy",
-			timestamp: new Date().toISOString(),
-		});
-	});
-
-	// Email signup
-	app.post("/api/signup", (req: Request<unknown, SignupResponse | ErrorResponse, SignupRequest>, res: Response<SignupResponse | ErrorResponse>) => {
-		try {
-			const { email } = req.body;
-
-			// Validate email format
-			if (!email || typeof email !== "string") {
-				res.status(400).json({ error: "Email is required" });
-				return;
-			}
-
-			if (!EMAIL_REGEX.test(email)) {
-				res.status(400).json({ error: "Invalid email format" });
-				return;
-			}
-
-			// Get current signups array
-			const signups = (signupsStore.getItem("signups") as EmailSignup[]) || [];
-
-			// Check if email already exists
-			const existingSignup = signups.find((signup) => signup.email.toLowerCase() === email.toLowerCase());
-
-			if (existingSignup) {
-				// Don't reveal that email is already registered - return success
-				console.log(`✓ Duplicate signup attempt: ${email}`);
-				res.json({
-					success: true,
-				});
-				return;
-			}
-
-			// Create new signup
-			const signup: EmailSignup = {
-				email: email.toLowerCase(),
-				timestamp: new Date().toISOString(),
-				notified: false,
-			};
-
-			// Add to array and save
-			signups.push(signup);
-			signupsStore.setItem("signups", signups);
-
-			console.log(`✓ New signup: ${signup.email}`);
-
-			res.json({
-				success: true,
-			});
-		} catch (error) {
-			console.error("Signup error:", error);
-			res.status(500).json({ error: "Internal server error" });
-		}
-	});
+	app.use("/api", apiRouter);
 
 	// In production, serve static files from dist/frontend
 	if (!isDevelopment) {
@@ -110,7 +55,7 @@ async function startServer() {
 		});
 	} else {
 		// 404 handler for dev mode (API only)
-		app.use((_req: Request, res: Response) => {
+		app.use((_req, res) => {
 			res.status(404).json({ error: "Not found" });
 		});
 	}
