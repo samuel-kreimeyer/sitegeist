@@ -31,12 +31,12 @@
 		"pdfjs-dist": "^5.4.296",
 		"three": "^0.180.0",
 		"tsx": "^4.20.6",
-		"xlsx": "^0.18.5"
+		"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.2.5",
 		"@tailwindcss/cli": "^4.0.0-beta.14",
-		"@types/chrome": "^0.1.16",
+		"@types/chrome": "^0.1.24",
 		"@types/webextension-polyfill": "^0.12.4",
 		"concurrently": "^9.2.1",
 		"esbuild": "^0.25.10",

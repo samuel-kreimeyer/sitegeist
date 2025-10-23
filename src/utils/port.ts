@@ -47,21 +47,6 @@ export interface LockedSessionsMessage {
 	locks: Record<string, number>; // sessionId -> windowId
 }
 
-/**
- * Command from background to sidepanel to close itself.
- * Used for keyboard shortcut toggle.
- */
-export interface CloseYourselfMessage {
-	type: "close-yourself";
-}
-
-/**
- * Marker interface for fire-and-forget messages (no response expected).
- */
-export interface VoidResponse {
-	_void: never;
-}
-
 // ============================================================================
 // DERIVED TYPES
 // ============================================================================
@@ -82,7 +67,7 @@ export type SidepanelToBackgroundMessage = MessagePair["request"];
 /**
  * All messages that can be sent from background to sidepanel.
  */
-export type BackgroundToSidepanelMessage = MessagePair["response"] | CloseYourselfMessage;
+export type BackgroundToSidepanelMessage = MessagePair["response"];
 
 /**
  * Maps request message type to corresponding response message type.
@@ -125,22 +110,16 @@ export function initialize(windowId: number): void {
  * Create new port connection and set up listeners.
  * Background script will receive this connection via runtime.onConnect.
  */
-function connect(): void {
+function connect(): chrome.runtime.Port {
 	if (!currentWindowId) {
 		throw new Error("[Port] Cannot connect: windowId not initialized");
 	}
 
-	console.log("[Port] Connecting...");
-	port = chrome.runtime.connect({ name: `sidepanel:${currentWindowId}` });
+	console.log(`[Port] Connecting... (${new Date().toISOString()})`);
+	const tmpPort = chrome.runtime.connect({ name: `sidepanel:${currentWindowId}` });
 
 	// Set up message listener to dispatch responses
-	port.onMessage.addListener((msg: BackgroundToSidepanelMessage) => {
-		// Handle special close-yourself command
-		if (msg.type === "close-yourself") {
-			window.close();
-			return;
-		}
-
+	tmpPort.onMessage.addListener((msg: BackgroundToSidepanelMessage) => {
 		// Dispatch to registered response handlers
 		const handler = responseHandlers.get(msg.type);
 		if (handler) {
@@ -149,12 +128,13 @@ function connect(): void {
 	});
 
 	// Set up disconnect listener
-	port.onDisconnect.addListener(() => {
-		console.log("[Port] Disconnected (likely due to inactivity timeout)");
+	tmpPort.onDisconnect.addListener(() => {
+		console.log(`[Port] Disconnected (likely due to inactivity timeout) (${new Date().toISOString()})`);
 		port = null;
 	});
 
-	console.log("[Port] Connected");
+	console.log(`[Port] Connected (${new Date().toISOString()})`);
+	return tmpPort;
 }
 
 /**
@@ -180,12 +160,7 @@ export async function sendMessage<TRequest extends SidepanelToBackgroundMessage>
 	for (let attempt = 1; attempt <= 2; attempt++) {
 		// Ensure we have a port connection
 		if (!port) {
-			connect();
-		}
-
-		// TypeScript: at this point port cannot be null (connect() sets it)
-		if (!port) {
-			throw new Error("[Port] Failed to establish connection");
+			port = connect();
 		}
 
 		try {

@@ -8,18 +8,18 @@ Sitegeist implements window-scoped session locking using Chrome's port API to pr
 
 ### Opening Sidepanels
 
-**First Window** (Cmd+Shift+P):
+**First Window** (Cmd+Shift+S on Mac, Ctrl+Shift+S on Windows/Linux):
 - Opens sidepanel
 - Automatically loads last active session
 - Session is locked to this window
 - Navigation events from tabs in this window are tracked
 
-**Second Window** (Cmd+Shift+P):
+**Second Window** (Cmd+Shift+S on Mac, Ctrl+Shift+S on Windows/Linux):
 - Opens sidepanel
 - Last session is locked → shows landing page with welcome message
 - Can create new session or select different session from history
 
-**Keyboard Shortcut** (Cmd+Shift+P):
+**Keyboard Shortcut** (Cmd+Shift+S on Mac, Ctrl+Shift+S on Windows/Linux):
 - When sidepanel closed → opens it
 - When sidepanel open → closes it
 - Works independently per window
@@ -62,35 +62,36 @@ Manages session locks and port connections. See implementation for details.
 - **State**: Uses `chrome.storage.session` for persistent state (survives service worker sleep):
   - `session_locks`: sessionId → windowId mapping
   - `sidepanel_open_windows`: array of windowIds with open sidepanels
-  - `windowPorts`: In-memory Map (windowId → port) for message delivery
+  - `openSidepanels`: In-memory Set (windowId) initialized from storage on startup, updated synchronously on port events
+- **Initialization**: Populates `openSidepanels` cache from storage when service worker starts
 - **Port handler**: Listens for connections with name format `sidepanel:${windowId}`
-  - Marks sidepanel as open in storage on connect
-  - `acquireLock` message: Reads locks from storage, grants if available or owner port is dead
+  - Updates cache and marks sidepanel as open in storage on connect
+  - `acquireLock` message: Reads locks from storage, grants if available or owner sidepanel is closed
   - `getLockedSessions` message: Reads locks from storage for session list UI
-  - `onDisconnect`: Releases all locks and marks sidepanel closed in storage
+  - `onDisconnect`: Updates cache, releases all locks, and marks sidepanel closed in storage
 - **Window cleanup**: Belt-and-suspenders cleanup when entire window closes (same logic as onDisconnect)
-- **Keyboard shortcut**: Reads sidepanel state from storage, toggles open/close with stale state detection
+- **Keyboard shortcut**: Checks synchronous `openSidepanels` cache to maintain user gesture context, toggles open/close using `chrome.sidePanel.close()` (Chrome 141+)
 
 #### Port Module ([utils/port.ts](../src/utils/port.ts))
 
 Centralized port communication with automatic reconnection and type-safe messaging. See implementation for details.
 
 **Key features**:
-- **Initialization** (line 116): `initialize(windowId)` - must be called before sending messages
-- **Auto-reconnection** (line 173): 2-attempt retry with automatic reconnect on failure or ~5min inactivity timeout
-- **Type-safe messaging** (line 173): `sendMessage<TRequest>` infers response type from request type
-- **Message routing** (line 134): Dispatches responses to registered handlers, handles `close-yourself` command
-- **Connection management** (line 125): Creates port with name `sidepanel:${windowId}`, listens for disconnect
+- **Initialization**: `initialize(windowId)` - must be called before sending messages
+- **Auto-reconnection**: 2-attempt retry with automatic reconnect on failure or ~5min inactivity timeout
+- **Type-safe messaging**: `sendMessage<TRequest>` infers response type from request type
+- **Message routing**: Dispatches responses to registered handlers
+- **Connection management**: Creates port with name `sidepanel:${windowId}`, listens for disconnect
 
 #### Sidepanel ([sidepanel.ts](../src/sidepanel.ts))
 
 Uses port module for session locking and tracks window-specific events. See implementation for details.
 
 **Key behaviors**:
-- **Port init** (line 660): Calls `port.initialize(currentWindowId)` during app startup
-- **Lock on init** (line 703): Tries to acquire lock for latest session, shows landing page if locked
-- **Lock on session creation** (line 230): Acquires lock when first message creates a sessionId
-- **Window filtering** (line 518, 538): Only tracks tab navigation/activation in current window
+- **Port init**: Calls `port.initialize(currentWindowId)` during app startup
+- **Lock on init**: Tries to acquire lock for latest session, shows landing page if locked
+- **Lock on session creation**: Acquires lock when first message creates a sessionId
+- **Window filtering**: Only tracks tab navigation/activation in current window
 - **No manual cleanup**: Port disconnect automatically releases locks on navigation/close
 
 #### Session List Dialog ([dialogs/SessionListDialog.ts](../src/dialogs/SessionListDialog.ts))
@@ -98,9 +99,9 @@ Uses port module for session locking and tracks window-specific events. See impl
 Displays session list with Current/Locked badges. See implementation for details.
 
 **Key features**:
-- **Lock query** (line 78): Uses `port.sendMessage({ type: "getLockedSessions" })` to fetch all locks
-- **Badge logic** (line 153-163): `isSessionLocked()` and `isCurrentSession()` determine badge display
-- **UI rendering** (line 473-497): Locked sessions are dimmed and non-clickable, current session highlighted
+- **Lock query**: Uses `port.sendMessage({ type: "getLockedSessions" })` to fetch all locks
+- **Badge logic**: `isSessionLocked()` and `isCurrentSession()` determine badge display
+- **UI rendering**: Locked sessions are dimmed and non-clickable, current session highlighted
 
 ## Technical Details
 
@@ -118,9 +119,9 @@ Displays session list with Current/Locked badges. See implementation for details
 
 ### Stale Lock Detection
 
-Background checks if lock owner's port still exists before denying lock request. If owner port is dead (stale lock), lock is reassigned to requester.
+Background checks if lock owner's sidepanel is still open using the `openSidepanels` cache before denying lock request. If owner sidepanel is closed (stale lock), lock is reassigned to requester.
 
-**Storage-based state** survives service worker sleep, preventing lock loss during normal operation. If port is missing but storage indicates sidepanel is open, system detects and cleans up stale state.
+**Storage-based state** survives service worker sleep, preventing lock loss during normal operation. The `openSidepanels` cache is rebuilt from storage on service worker startup and kept synchronized via port events.
 
 ### Session Storage-Based Locks
 
@@ -128,18 +129,18 @@ Background checks if lock owner's port still exists before denying lock request.
 - Session locks (allowing same session in multiple windows)
 - Keyboard shortcut toggle (always thinks sidepanel is closed)
 
-**Solution**: Use `chrome.storage.session` for all state:
-- Persists across service worker sleep/wake cycles
-- Automatically cleared on browser restart (prevents permanent stale locks)
-- Combined with port-based cleanup for reliable disconnect detection
-- Stale state detection: if storage says open but no port exists, clean up and recover
+**Solution**: Dual-layer state management:
+- **Persistent layer**: `chrome.storage.session` persists across service worker sleep/wake cycles, automatically cleared on browser restart (prevents permanent stale locks)
+- **Synchronous layer**: `openSidepanels` in-memory Set initialized from storage on startup, updated synchronously on port events
+- **User gesture compatibility**: Keyboard shortcut checks synchronous cache to maintain user gesture context (required by `chrome.sidePanel.open()`)
+- **Chrome 141+ API**: Uses `chrome.sidePanel.close()` for programmatic sidepanel closing
 
-Port module still handles automatic reconnection after ~5min Chrome inactivity timeout (2-attempt retry logic). See [utils/port.ts:173-236](../src/utils/port.ts#L173-L236).
+Port module still handles automatic reconnection after ~5min Chrome inactivity timeout (2-attempt retry logic).
 
 ## Test Scenarios
 
 1. **Basic Isolation**
-   - Window A: Open sidepanel (Cmd+Shift+P) → session loads
+   - Window A: Open sidepanel (Cmd+Shift+S) → session loads
    - Window B: Open sidepanel → landing page (session locked)
    - Navigate in Window A tabs → only Window A sees events
    - Navigate in Window B tabs → no effect on Window A
@@ -167,8 +168,8 @@ Port module still handles automatic reconnection after ~5min Chrome inactivity t
    - Window B: Session now available (lock released)
 
 7. **Keyboard Toggle**
-   - Sidepanel open: Cmd+Shift+P → closes
-   - Sidepanel closed: Cmd+Shift+P → opens
+   - Sidepanel open: Cmd+Shift+S → closes
+   - Sidepanel closed: Cmd+Shift+S → opens
    - Independent per window
 
 8. **Navigation**
@@ -210,4 +211,4 @@ Port module still handles automatic reconnection after ~5min Chrome inactivity t
 - [utils/i18n-extension.ts](../src/utils/i18n-extension.ts) - "Current" and "Locked" translations
 
 **Configuration**:
-- [static/manifest.chrome.json](../static/manifest.chrome.json) - Chrome keyboard shortcut: "toggle-sidepanel" with Cmd+Shift+P
+- [static/manifest.chrome.json](../static/manifest.chrome.json) - Chrome keyboard shortcut: "toggle-sidepanel" with Cmd+Shift+S (Mac) / Ctrl+Shift+S (Windows/Linux)
