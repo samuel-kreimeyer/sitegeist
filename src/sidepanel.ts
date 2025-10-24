@@ -317,7 +317,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			// Create extract_document tool with CORS proxy from settings (loaded above)
 			const extractDocumentTool = createExtractDocumentTool();
 			if (corsProxyEnabled && corsProxyUrl) {
-				extractDocumentTool.corsProxyUrl = `${corsProxyUrl}/?`;
+				extractDocumentTool.corsProxyUrl = `${corsProxyUrl}/?url=`;
 			}
 
 			const replTool = createReplTool();
