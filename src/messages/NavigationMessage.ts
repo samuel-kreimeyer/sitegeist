@@ -5,6 +5,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { SkillPill } from "../components/SkillPill.js";
 import { getSitegeistStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
+import { formatSkills } from "../utils/format-skills.js";
 
 // ============================================================================
 // NAVIGATION MESSAGE TYPE
@@ -16,6 +17,7 @@ export interface NavigationMessage {
 	title: string;
 	favicon?: string;
 	tabId?: number;
+	skillsOutput: string; // Frozen formatted skills text (shown to LLM)
 }
 
 // Extend CustomMessages interface via declaration merging
@@ -115,17 +117,23 @@ export function registerNavigationRenderer() {
 // HELPER
 // ============================================================================
 
-export function createNavigationMessage(
+export async function createNavigationMessage(
 	url: string,
 	title: string,
 	favicon?: string,
 	tabId?: number,
-): NavigationMessage {
+): Promise<NavigationMessage> {
+	// Get skills for this URL and format them
+	const skillsRepo = getSitegeistStorage().skills;
+	const matchingSkills = await skillsRepo.getSkillsForUrl(url);
+	const { formattedText: skillsOutput } = formatSkills(matchingSkills);
+
 	return {
 		role: "navigation",
 		url,
 		title,
 		favicon,
 		tabId,
+		skillsOutput,
 	};
 }

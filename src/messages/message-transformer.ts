@@ -1,7 +1,5 @@
 import type { Message } from "@mariozechner/pi-ai";
 import type { AppMessage } from "@mariozechner/pi-web-ui";
-import { getSitegeistStorage } from "../storage/app-storage.js";
-import { formatSkills } from "../utils/format-skills.js";
 import type { NavigationMessage } from "./NavigationMessage.js";
 
 // Helper: Check if a message has toolCall blocks
@@ -77,7 +75,6 @@ function reorderMessages(messages: Message[]): Message[] {
 // Custom message transformer for browser extension
 // Handles navigation messages and app-specific message types
 export async function browserMessageTransformer(messages: AppMessage[]): Promise<Message[]> {
-	const skillsRepo = getSitegeistStorage().skills;
 	const transformed = [];
 
 	for (const m of messages) {
@@ -95,9 +92,8 @@ export async function browserMessageTransformer(messages: AppMessage[]): Promise
 			const nav = m as NavigationMessage;
 			const tabInfo = nav.tabId !== undefined ? ` (tab id: ${nav.tabId})` : "";
 
-			// Load skills matching this navigation URL
-			const skills = await skillsRepo.getSkillsForUrl(nav.url);
-			const { formattedText: skillsInfo } = formatSkills(skills);
+			// Use cached skills output (formatted at message creation time)
+			const skillsInfo = nav.skillsOutput;
 
 			transformed.push({
 				role: "user",

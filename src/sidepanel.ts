@@ -226,6 +226,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 	}
 
 	// Reset skill tracking for new session
+	// When loading an old session, we intentionally don't reconstruct shownSkills
+	// This ensures that new navigations in the continued session show the LATEST
+	// version of skills, even if they were updated since the session was created
 	shownSkills.clear();
 
 	// Load debugger mode setting
@@ -342,18 +345,23 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			});
 			if (!tab?.url || tab.url.startsWith("chrome-extension://") || tab.url.startsWith("moz-extension://")) return;
 
-			// Find most recent navigation message (reverse iteration for compatibility)
-			let lastNav: NavigationMessage | undefined;
+			// Find most recent navigation (either nav message or nav tool result)
+			let lastUrl: string | undefined;
 			for (let i = agent.state.messages.length - 1; i >= 0; i--) {
-				if (agent.state.messages[i].role === "navigation") {
-					lastNav = agent.state.messages[i] as NavigationMessage;
+				const msg = agent.state.messages[i];
+				if (msg.role === "navigation") {
+					lastUrl = (msg as NavigationMessage).url;
+					break;
+				}
+				if (msg.role === "toolResult" && (msg as any).toolName === "navigate") {
+					lastUrl = (msg as any).details?.finalUrl;
 					break;
 				}
 			}
 
 			// Only add if URL changed
-			if (!lastNav || lastNav.url !== tab.url) {
-				const navMessage = createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
+			if (!lastUrl || lastUrl !== tab.url) {
+				const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
 				agent.appendMessage(navMessage);
 			}
 		},
@@ -569,7 +577,7 @@ const renderApp = () => {
 // ============================================================================
 
 // Listen for tab updates and insert navigation messages only when agent is running
-chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
 	// Only care about URL changes on the active tab while agent is working
 	// Ignore chrome-extension:// URLs (extension internal pages)
 	// Ignore tool-initiated navigations (handled by the navigate tool itself)
@@ -584,7 +592,7 @@ chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
 		!tab.url.startsWith("moz-extension://") &&
 		!isToolNavigating()
 	) {
-		const navMessage = createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
+		const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
 		agent.queueMessage(navMessage);
 		console.log("Queued navigation message for tab switch to", tab.url);
 	}
@@ -605,7 +613,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 		!tab.url.startsWith("moz-extension://") &&
 		!isToolNavigating()
 	) {
-		const navMessage = createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
+		const navMessage = await createNavigationMessage(tab.url, tab.title || "Untitled", tab.favIconUrl, tab.id);
 		agent.queueMessage(navMessage);
 		console.log("Queued navigation message for tab switch to", tab.url);
 	}

@@ -138,7 +138,7 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 		const matchingSkills = await skillsRepo.getSkillsForUrl(finalUrl);
 		const { newOrUpdated, unchanged, formattedText: skillsOutput } = formatSkills(matchingSkills);
 
-		// Build skills array with full details for new/updated
+		// Build skills array with full details for all skills (needed for UI rendering)
 		const skills = [
 			...newOrUpdated.map((s) => ({
 				name: s.name,
@@ -148,6 +148,7 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 			...unchanged.map((s) => ({
 				name: s.name,
 				shortDescription: s.shortDescription,
+				fullDetails: s,
 			})),
 		];
 
@@ -313,7 +314,7 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 		const matchingSkills = finalUrl ? await skillsRepo.getSkillsForUrl(finalUrl) : [];
 		const { newOrUpdated, unchanged, formattedText: skillsOutput } = formatSkills(matchingSkills);
 
-		// Build skills array with full details for new/updated
+		// Build skills array with full details for all skills (needed for UI rendering)
 		const skills = [
 			...newOrUpdated.map((s) => ({
 				name: s.name,
@@ -323,6 +324,7 @@ export class NavigateTool implements AgentTool<typeof navigateSchema, NavigateRe
 			...unchanged.map((s) => ({
 				name: s.name,
 				shortDescription: s.shortDescription,
+				fullDetails: s,
 			})),
 		];
 
@@ -412,16 +414,21 @@ export const navigateRenderer: ToolRenderer<NavigateParams, NavigateResult> = {
 				const faviconUrl = favicon || getFallbackFavicon(finalUrl);
 
 				// Convert skills to Skill objects for SkillPill
-				const skillObjects: Skill[] = (skills || []).map((s) => ({
-					name: s.name,
-					shortDescription: s.shortDescription,
-					description: "",
-					examples: "",
-					library: "",
-					domainPatterns: [],
-					createdAt: new Date().toISOString(),
-					lastUpdated: new Date().toISOString(),
-				}));
+				// Use fullDetails if available (for new/updated skills), otherwise create minimal skill
+				const skillObjects: Skill[] = (skills || []).map((s) =>
+					s.fullDetails
+						? s.fullDetails
+						: {
+								name: s.name,
+								shortDescription: s.shortDescription,
+								description: "",
+								examples: "",
+								library: "",
+								domainPatterns: [],
+								createdAt: new Date().toISOString(),
+								lastUpdated: new Date().toISOString(),
+							},
+				);
 
 				return {
 					content: html`
