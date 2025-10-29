@@ -3,6 +3,7 @@ import type { AgentTool, ToolResultMessage } from "@mariozechner/pi-ai";
 import {
 	registerToolRenderer,
 	renderCollapsibleHeader,
+	renderHeader,
 	type ToolRenderer,
 	type ToolRenderResult,
 } from "@mariozechner/pi-web-ui";
@@ -668,7 +669,7 @@ export const selectElementRenderer: ToolRenderer<SelectElementParams, SelectElem
 		const detailsContentRef = createRef<HTMLDivElement>();
 		const detailsChevronRef = createRef<HTMLSpanElement>();
 
-		// With result: show element info
+		// With result: show element info or error
 		if (result && !result.isError && result.details) {
 			const el = result.details;
 
@@ -801,6 +802,15 @@ export const selectElementRenderer: ToolRenderer<SelectElementParams, SelectElem
 						</div>
 					</div>
 				`,
+				isCustom: false,
+			};
+		}
+
+		// Error state (aborted or failed)
+		if (result?.isError) {
+			const message = params?.message || "Click an element to select it";
+			return {
+				content: renderHeader(state, MousePointer2, message),
 				isCustom: false,
 			};
 		}
