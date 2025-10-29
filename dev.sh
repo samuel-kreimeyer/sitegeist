@@ -24,11 +24,11 @@ trap 'echo ""; echo "🛑 Stopping all dev servers..."; kill 0' EXIT INT TERM
 
 # Start dev servers
 echo "📦 Starting mini-lit dev server..."
-(cd ../mini-lit && npm run dev) &
+(cd ../mini-lit && npm run dev:tsc) &
 MINI_LIT_PID=$!
 
 echo "🤖 Starting pi-mono dev server..."
-(cd ../pi-mono && npm run dev) &
+(cd ../pi-mono && npm run dev:tsc) &
 PI_MONO_PID=$!
 
 # Wait a moment for dependencies to start building
@@ -43,14 +43,14 @@ echo "🏠 Starting sitegeist site dev server..."
 SITE_PID=$!
 
 echo ""
-echo "✅ All dev servers started!"
+echo "✅ All dev services started!"
 echo "   - mini-lit: PID $MINI_LIT_PID"
 echo "   - pi-mono: PID $PI_MONO_PID"
 echo "   - sitegeist: PID $SITEGEIST_PID"
 echo "   - site (backend): http://localhost:3000"
 echo "   - site (frontend): http://localhost:8080"
 echo ""
-echo "Press Ctrl+C to stop all servers"
+echo "Press Ctrl+C to stop all services"
 echo ""
 
 # Wait for all background jobs

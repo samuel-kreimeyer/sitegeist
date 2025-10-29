@@ -23,23 +23,29 @@
 1. **Installation** - User installs Sitegeist browser extension
 2. **Authentication** - If not logged in, user is prompted to log in or create account (email + password)
 3. **Email Verification** - Account creation requires one-time code via email for verification
-4. **Trial Period** - New accounts get 500 message exchanges with their own provider API keys
-   - Extension tracks message count but **NOT message content** (privacy-first)
-   - User can finish current session but cannot create new sessions or resume other sessions after limit
-5. **Paywall** - After 500 messages, user is presented with subscription option ($5-10/month)
+4. **Trial Period** - New accounts get $1.00 in token credits with Sitegeist-provided Haiku model
+   - **No BYOK required during trial** - Sitegeist handles API keys and model access
+   - Extension sends requests to backend, which proxies to AI provider
+   - Server tracks token usage in dollars but **NOT message content** (privacy-first)
+   - Usage deducted per request: prompt tokens + completion tokens = cost in credits
+   - User can finish current session but cannot create new sessions when credits depleted
+5. **Paywall** - After $1.00 credits exhausted, user is presented with subscription option ($5-10/month)
 6. **Payment** - Subscription action redirects to payment provider (Stripe/LemonSqueezy/Paddle)
 7. **Status Sync** - Extension polls server for subscription status until payment completes or is cancelled
+8. **Post-Payment** - Paid users can use BYOK or continue with Sitegeist-provided models (unlimited)
 
 ### Data Storage Requirements
 Per-user data on server:
 - **User Account**: email, password hash, email verification status
 - **Plan Status**: trial, paid, expired
-- **Message Count**: Only during trial period (privacy: no message content stored)
+- **Token Credits**: Remaining balance during trial (e.g., $0.47 remaining)
+- **Token Usage Stats**: Total tokens used, total cost (for analytics, not per-message tracking)
 - **Payment Provider Data**: customer ID, subscription ID, subscription status
 
 ### Non-Requirements
 - ❌ Multi-device sync (user data lives locally in extension, only auth/subscription on server)
 - ❌ Message content storage (privacy-first design)
+- ❌ Per-message history or detailed token logs (only aggregate totals)
 - ❌ Complex user profiles or settings
 
 ---
@@ -297,6 +303,170 @@ DATABASE_URL=postgresql://new-host/sitegeist
 
 ---
 
+## AI Proxy Architecture
+
+### Overview
+
+Since trial users don't provide their own API keys (BYOK), the backend must proxy AI requests to Anthropic on their behalf. This requires:
+
+1. **Server-side API key management** - Store Sitegeist API keys securely
+2. **Request proxying** - Forward extension requests to Anthropic API
+3. **Token usage tracking** - Calculate costs and deduct from user credits
+4. **Credit enforcement** - Prevent usage when credits exhausted
+
+### Architecture Diagram
+
+```
+┌─────────────────┐
+│   Extension     │
+│   (Frontend)    │
+└────────┬────────┘
+         │ POST /api/ai/chat
+         │ { messages: [...], model: "haiku" }
+         │ Authorization: Bearer <jwt>
+         ↓
+┌─────────────────────────────────────────────┐
+│  Backend Server (Node.js + Express)         │
+├─────────────────────────────────────────────┤
+│  1. Authenticate user (JWT)                 │
+│  2. Check subscription plan & credits       │
+│  3. Forward to Anthropic API                │
+│  4. Calculate cost from usage               │
+│  5. Deduct credits (atomic transaction)     │
+│  6. Return response + updated status        │
+└────────┬────────────────────────────────────┘
+         │
+         │ POST https://api.anthropic.com/v1/messages
+         │ x-api-key: <sitegeist_api_key>
+         │ { messages: [...], model: "claude-3-haiku-20240307" }
+         ↓
+┌─────────────────┐
+│  Anthropic API  │
+└─────────────────┘
+```
+
+### Token Pricing (Anthropic)
+
+```typescript
+// src/backend/ai/pricing.ts
+export const MODEL_PRICING = {
+  'claude-3-haiku-20240307': {
+    inputPer1M: 0.25,    // $0.25 per 1M input tokens
+    outputPer1M: 1.25,   // $1.25 per 1M output tokens
+  },
+  'claude-3-5-sonnet-20241022': {
+    inputPer1M: 3.00,    // $3.00 per 1M input tokens
+    outputPer1M: 15.00,  // $15.00 per 1M output tokens
+  }
+} as const;
+
+export function calculateCost(
+  model: string,
+  promptTokens: number,
+  completionTokens: number
+): number {
+  const pricing = MODEL_PRICING[model];
+  if (!pricing) throw new Error(`Unknown model: ${model}`);
+
+  const inputCost = (promptTokens / 1_000_000) * pricing.inputPer1M;
+  const outputCost = (completionTokens / 1_000_000) * pricing.outputPer1M;
+
+  return inputCost + outputCost;
+}
+```
+
+### Trial Credit Calculations
+
+```typescript
+// How far does $1.00 get you with Haiku?
+
+// Average request: 1000 input tokens, 500 output tokens
+const avgCost = (1000 / 1_000_000 * 0.25) + (500 / 1_000_000 * 1.25)
+             = 0.00025 + 0.000625
+             = 0.000875 per request
+
+// $1.00 / $0.000875 ≈ 1,143 requests
+
+// Small request: 500 input, 200 output
+const smallCost = (500 / 1_000_000 * 0.25) + (200 / 1_000_000 * 1.25)
+               = 0.000125 + 0.00025
+               = 0.000375 per request
+
+// $1.00 / $0.000375 ≈ 2,667 requests
+
+// Large request: 5000 input, 2000 output
+const largeCost = (5000 / 1_000_000 * 0.25) + (2000 / 1_000_000 * 1.25)
+               = 0.00125 + 0.0025
+               = 0.00375 per request
+
+// $1.00 / $0.00375 ≈ 267 requests
+```
+
+**Conclusion**: $1.00 provides approximately 300-2,500 AI requests depending on conversation length. More than sufficient for trial evaluation.
+
+### Security Considerations
+
+**API Key Storage**:
+```yaml
+# site/infra/docker-compose.yml
+services:
+  backend:
+    environment:
+      - ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic_api_key
+    secrets:
+      - anthropic_api_key
+
+secrets:
+  anthropic_api_key:
+    file: ./secrets/anthropic_api_key.txt
+```
+
+**Rate Limiting**:
+```typescript
+// Prevent abuse even with valid JWT
+// Limit: 100 requests per minute per user
+import rateLimit from 'express-rate-limit';
+
+const aiProxyLimiter = rateLimit({
+  windowMs: 60 * 1000,  // 1 minute
+  max: 100,  // 100 requests per window
+  keyGenerator: (req) => req.userId,  // Rate limit per user
+  handler: (req, res) => {
+    res.status(429).json({ error: 'Too many requests, please slow down' });
+  }
+});
+
+app.post('/api/ai/chat', authMiddleware, aiProxyLimiter, aiChatHandler);
+```
+
+**Input Validation**:
+```typescript
+// Prevent malicious input
+const MAX_MESSAGES = 100;  // Max messages in conversation
+const MAX_MESSAGE_LENGTH = 50000;  // Max chars per message
+
+function validateChatRequest(body: any): void {
+  if (!Array.isArray(body.messages)) {
+    throw new Error('messages must be an array');
+  }
+
+  if (body.messages.length > MAX_MESSAGES) {
+    throw new Error(`Too many messages (max ${MAX_MESSAGES})`);
+  }
+
+  for (const msg of body.messages) {
+    if (!msg.role || !msg.content) {
+      throw new Error('Invalid message format');
+    }
+    if (msg.content.length > MAX_MESSAGE_LENGTH) {
+      throw new Error(`Message too long (max ${MAX_MESSAGE_LENGTH} chars)`);
+    }
+  }
+}
+```
+
+---
+
 ## Database Schema
 
 ### Users Table
@@ -325,9 +495,11 @@ CREATE TABLE subscriptions (
   -- Plan status
   plan TEXT NOT NULL CHECK (plan IN ('trial', 'paid', 'expired')),
 
-  -- Trial tracking
-  message_count INTEGER DEFAULT 0,
-  message_limit INTEGER DEFAULT 500,
+  -- Trial tracking (credit-based)
+  token_credits_remaining NUMERIC(10, 6) DEFAULT 1.000000,  -- $1.00 in credits
+  token_credits_initial NUMERIC(10, 6) DEFAULT 1.000000,
+  total_tokens_used BIGINT DEFAULT 0,  -- Aggregate tokens (analytics only)
+  total_cost_usd NUMERIC(10, 6) DEFAULT 0.000000,  -- Aggregate cost (analytics only)
   trial_started_at TIMESTAMP DEFAULT NOW(),
   trial_ended_at TIMESTAMP,
 
@@ -340,7 +512,8 @@ CREATE TABLE subscriptions (
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW(),
 
-  UNIQUE(user_id)
+  UNIQUE(user_id),
+  CHECK (token_credits_remaining >= 0)  -- Cannot go negative
 );
 
 CREATE INDEX idx_subscriptions_user_id ON subscriptions(user_id);
@@ -351,7 +524,7 @@ CREATE INDEX idx_subscriptions_stripe_subscription_id ON subscriptions(stripe_su
 ### Drizzle Schema (TypeScript)
 ```typescript
 // src/backend/db/schema.ts
-import { pgTable, uuid, text, integer, timestamp, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, integer, timestamp, boolean, numeric, bigint } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -371,9 +544,11 @@ export const subscriptions = pgTable('subscriptions', {
   // Plan status
   plan: text('plan').notNull(), // 'trial' | 'paid' | 'expired'
 
-  // Trial tracking
-  messageCount: integer('message_count').default(0),
-  messageLimit: integer('message_limit').default(500),
+  // Trial tracking (credit-based)
+  tokenCreditsRemaining: numeric('token_credits_remaining', { precision: 10, scale: 6 }).default('1.000000'),
+  tokenCreditsInitial: numeric('token_credits_initial', { precision: 10, scale: 6 }).default('1.000000'),
+  totalTokensUsed: bigint('total_tokens_used', { mode: 'number' }).default(0),
+  totalCostUsd: numeric('total_cost_usd', { precision: 10, scale: 6 }).default('0.000000'),
   trialStartedAt: timestamp('trial_started_at').defaultNow(),
   trialEndedAt: timestamp('trial_ended_at'),
 
@@ -391,12 +566,12 @@ export const subscriptions = pgTable('subscriptions', {
 ### Data Size Estimation
 ```
 1 user record:     ~500 bytes (email, hash, timestamps)
-1 subscription:    ~800 bytes (plan, counts, stripe data)
-Total per user:    ~1.3KB
+1 subscription:    ~900 bytes (plan, credits/numeric fields, stripe data)
+Total per user:    ~1.4KB
 
-1,000 users:       ~1.3MB
-10,000 users:      ~13MB
-100,000 users:     ~130MB
+1,000 users:       ~1.4MB
+10,000 users:      ~14MB
+100,000 users:     ~140MB
 
 Database on disk:  ~2-3x data size (indexes, overhead)
 RAM requirement:   ~100MB per 10k active users
@@ -507,32 +682,58 @@ Flow:
 
 ### Subscription Endpoints
 
-#### POST /api/messages/log
+#### POST /api/ai/chat (AI Proxy Endpoint)
 ```typescript
 Headers:
 {
   Authorization: "Bearer <jwt_token>"
 }
 
+Request:
+{
+  messages: Array<{role: string, content: string}>,
+  model?: string  // Optional, defaults to haiku for trial users
+}
+
 Response:
 {
-  messageCount: number,
-  messageLimit: number,
-  remainingMessages: number,
-  plan: 'trial' | 'paid' | 'expired'
+  response: {
+    id: string,
+    content: string,
+    model: string,
+    usage: {
+      promptTokens: number,
+      completionTokens: number,
+      totalTokens: number
+    }
+  },
+  subscription: {
+    tokenCreditsRemaining: number,
+    totalTokensUsed: number,
+    plan: 'trial' | 'paid' | 'expired'
+  }
 }
 
 Flow:
 1. Authenticate user from JWT
-2. Atomic increment:
+2. Check subscription plan:
+   - If 'trial': Use Sitegeist API keys, check credits > 0
+   - If 'paid': Use user's BYOK or Sitegeist keys (unlimited)
+   - If 'expired': Return 402 Payment Required
+3. Forward request to AI provider (Anthropic)
+4. Calculate cost based on usage:
+   cost = (promptTokens * promptPrice) + (completionTokens * completionPrice)
+   Example: Haiku = $0.25/1M input, $1.25/1M output
+5. Atomic credit deduction (if trial):
    UPDATE subscriptions
-   SET message_count = message_count + 1,
+   SET token_credits_remaining = token_credits_remaining - $cost,
+       total_tokens_used = total_tokens_used + $totalTokens,
+       total_cost_usd = total_cost_usd + $cost,
        updated_at = NOW()
-   WHERE user_id = $1
+   WHERE user_id = $1 AND plan = 'trial'
    RETURNING *
-3. Check if limit exceeded (message_count > message_limit)
-4. If exceeded and plan='trial': set plan='expired'
-5. Return current status
+6. If credits <= 0 after deduction: set plan='expired'
+7. Return AI response + updated subscription status
 ```
 
 #### GET /api/subscription/status
@@ -545,8 +746,9 @@ Headers:
 Response:
 {
   plan: 'trial' | 'paid' | 'expired',
-  messageCount: number,
-  messageLimit: number,
+  tokenCreditsRemaining: number,  // Only for trial
+  totalTokensUsed: number,
+  totalCostUsd: number,
   subscriptionStatus?: 'active' | 'canceled' | 'past_due',
   subscriptionPeriodEnd?: string,
   trialStartedAt: string
@@ -633,10 +835,15 @@ Flow:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ 1. User Hits 500 Message Limit                              │
+│ 1. User Exhausts $1.00 Trial Credits                        │
 ├─────────────────────────────────────────────────────────────┤
-│ Extension calls: POST /api/messages/log                     │
-│ Response: { plan: 'expired', remainingMessages: 0 }         │
+│ Extension calls: POST /api/ai/chat                          │
+│ Response: {                                                  │
+│   subscription: {                                            │
+│     plan: 'expired',                                         │
+│     tokenCreditsRemaining: 0.000000                          │
+│   }                                                           │
+│ }                                                            │
 │ Extension shows paywall modal                               │
 └─────────────────────────────────────────────────────────────┘
                           ↓
@@ -899,7 +1106,158 @@ export function generateVerificationCode(): string {
 
 ---
 
-### Phase 3: Subscription & Payments (2 days)
+### Phase 3: AI Proxy Implementation (2 days)
+
+**1. Install Anthropic SDK**
+```bash
+npm install @anthropic-ai/sdk
+```
+
+**2. Token pricing module**
+```typescript
+// site/src/backend/ai/pricing.ts
+export const MODEL_PRICING = {
+  'claude-3-haiku-20240307': {
+    inputPer1M: 0.25,
+    outputPer1M: 1.25,
+  },
+} as const;
+
+export function calculateCost(
+  model: string,
+  promptTokens: number,
+  completionTokens: number
+): number {
+  const pricing = MODEL_PRICING[model];
+  if (!pricing) throw new Error(`Unknown model: ${model}`);
+
+  const inputCost = (promptTokens / 1_000_000) * pricing.inputPer1M;
+  const outputCost = (completionTokens / 1_000_000) * pricing.outputPer1M;
+
+  return inputCost + outputCost;
+}
+```
+
+**3. AI proxy handler**
+```typescript
+// site/src/backend/handlers/ai.ts
+import Anthropic from '@anthropic-ai/sdk';
+import { db } from '../db/client.js';
+import { subscriptions } from '../db/schema.js';
+import { eq, sql } from 'drizzle-orm';
+import { calculateCost } from '../ai/pricing.js';
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY
+});
+
+export async function handleAiChat(req: any, res: any) {
+  const userId = req.userId;  // From auth middleware
+  const { messages, model = 'claude-3-haiku-20240307' } = req.body;
+
+  // Get subscription
+  const [subscription] = await db
+    .select()
+    .from(subscriptions)
+    .where(eq(subscriptions.userId, userId));
+
+  // Check plan status
+  if (subscription.plan === 'expired') {
+    return res.status(402).json({ error: 'Trial credits exhausted' });
+  }
+
+  if (subscription.plan === 'trial' && subscription.tokenCreditsRemaining <= 0) {
+    return res.status(402).json({ error: 'Insufficient credits' });
+  }
+
+  // Forward to Anthropic
+  const response = await anthropic.messages.create({
+    model,
+    messages,
+    max_tokens: 4096
+  });
+
+  // Calculate cost
+  const cost = calculateCost(
+    model,
+    response.usage.input_tokens,
+    response.usage.output_tokens
+  );
+
+  // Deduct credits (atomic) if trial
+  if (subscription.plan === 'trial') {
+    const [updated] = await db
+      .update(subscriptions)
+      .set({
+        tokenCreditsRemaining: sql`token_credits_remaining - ${cost}`,
+        totalTokensUsed: sql`total_tokens_used + ${response.usage.input_tokens + response.usage.output_tokens}`,
+        totalCostUsd: sql`total_cost_usd + ${cost}`,
+        plan: sql`CASE WHEN token_credits_remaining - ${cost} <= 0 THEN 'expired' ELSE plan END`,
+        updatedAt: new Date()
+      })
+      .where(eq(subscriptions.userId, userId))
+      .returning();
+
+    return res.json({
+      response: {
+        id: response.id,
+        content: response.content[0].text,
+        model: response.model,
+        usage: {
+          promptTokens: response.usage.input_tokens,
+          completionTokens: response.usage.output_tokens,
+          totalTokens: response.usage.input_tokens + response.usage.output_tokens
+        }
+      },
+      subscription: {
+        tokenCreditsRemaining: Number(updated.tokenCreditsRemaining),
+        totalTokensUsed: updated.totalTokensUsed,
+        plan: updated.plan
+      }
+    });
+  }
+
+  // Paid users: just return response
+  return res.json({
+    response: {
+      id: response.id,
+      content: response.content[0].text,
+      model: response.model,
+      usage: {
+        promptTokens: response.usage.input_tokens,
+        completionTokens: response.usage.output_tokens,
+        totalTokens: response.usage.input_tokens + response.usage.output_tokens
+      }
+    },
+    subscription: {
+      plan: subscription.plan
+    }
+  });
+}
+```
+
+**4. Rate limiting**
+```bash
+npm install express-rate-limit
+```
+
+```typescript
+// site/src/backend/middleware/rate-limit.ts
+import rateLimit from 'express-rate-limit';
+
+export const aiProxyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  keyGenerator: (req: any) => req.userId,
+  handler: (req, res) => {
+    res.status(429).json({ error: 'Too many requests' });
+  }
+});
+```
+
+---
+
+### Phase 4: Subscription & Payments (2 days)
 
 **1. Stripe setup**
 ```bash
@@ -995,13 +1353,13 @@ export async function handleStripeWebhook(
 **4. Subscription handlers**
 ```typescript
 // site/src/backend/handlers/subscription.ts
-// Implement /messages/log, /subscription/status, /subscription/create-checkout
+// Implement /subscription/status, /subscription/create-checkout
 // (Use schema from API Endpoints section above)
 ```
 
 ---
 
-### Phase 4: Production Deployment (1 day)
+### Phase 5: Production Deployment (1 day)
 
 **1. Update production docker-compose.yml**
 ```yaml
@@ -1029,10 +1387,12 @@ services:
     environment:
       - DATABASE_URL=postgresql://sitegeist:${DB_PASSWORD}@postgres:5432/sitegeist
       - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic_api_key
       - STRIPE_SECRET_KEY_FILE=/run/secrets/stripe_secret
       - STRIPE_WEBHOOK_SECRET_FILE=/run/secrets/stripe_webhook
     secrets:
       - jwt_secret
+      - anthropic_api_key
       - stripe_secret
       - stripe_webhook
 
@@ -1041,6 +1401,8 @@ secrets:
     file: ./secrets/db_password.txt
   jwt_secret:
     file: ./secrets/jwt_secret.txt
+  anthropic_api_key:
+    file: ./secrets/anthropic_api_key.txt
   stripe_secret:
     file: ./secrets/stripe_secret.txt
   stripe_webhook:
@@ -1061,9 +1423,10 @@ mkdir -p secrets
 openssl rand -base64 32 > secrets/db_password.txt
 openssl rand -base64 64 > secrets/jwt_secret.txt
 
-# Add Stripe keys (from Stripe dashboard)
-echo "sk_live_..." > secrets/stripe_secret.txt
-echo "whsec_..." > secrets/stripe_webhook.txt
+# Add API keys
+echo "sk-ant-..." > secrets/anthropic_api_key.txt  # From Anthropic Console
+echo "sk_live_..." > secrets/stripe_secret.txt     # From Stripe dashboard
+echo "whsec_..." > secrets/stripe_webhook.txt      # From Stripe webhook config
 
 chmod 600 secrets/*
 ```
@@ -1124,7 +1487,7 @@ crontab -e
 
 ---
 
-### Phase 5: Extension Integration (2 days)
+### Phase 6: Extension Integration (2 days)
 
 **1. Add auth state to extension**
 ```typescript
@@ -1200,11 +1563,16 @@ export class ApiClient {
     });
   }
 
-  // Subscription methods
-  async logMessage() {
-    return this.request('/messages/log', { method: 'POST' });
+  // AI methods
+  async chat(messages: Array<{role: string, content: string}>) {
+    return this.request('/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages, model: 'claude-3-haiku-20240307' })
+    });
   }
 
+  // Subscription methods
   async getSubscriptionStatus() {
     return this.request('/subscription/status');
   }
@@ -1219,33 +1587,66 @@ export class ApiClient {
 export const api = new ApiClient();
 ```
 
-**3. Message tracking integration**
+**3. AI integration (replace existing AI provider calls)**
 ```typescript
-// In src/sidepanel.ts, after each message exchange:
+// In src/sidepanel.ts or wherever AI requests are made:
 import { api } from './api/client.js';
 
-async function onMessageSent() {
+async function sendMessage(messages: Array<{role: string, content: string}>) {
   try {
-    const status = await api.logMessage();
+    // Call backend AI proxy instead of direct Anthropic API
+    const result = await api.chat(messages);
 
-    if (status.plan === 'expired') {
+    // Check if trial expired
+    if (result.subscription.plan === 'expired') {
       showPaywallDialog();
+      return null;
     }
+
+    // Update UI with remaining credits (for trial users)
+    if (result.subscription.plan === 'trial') {
+      updateCreditsDisplay(result.subscription.tokenCreditsRemaining);
+    }
+
+    return result.response.content;
   } catch (error) {
-    console.error('Failed to log message:', error);
+    if (error.message.includes('402')) {
+      // Payment required
+      showPaywallDialog();
+      return null;
+    }
+    throw error;
   }
 }
 ```
 
-**4. Paywall dialog**
+**4. Credits display component**
+```typescript
+// src/components/credits-display.ts
+export function updateCreditsDisplay(creditsRemaining: number) {
+  const percentage = (creditsRemaining / 1.0) * 100;
+  const element = document.getElementById('trial-credits');
+
+  if (element) {
+    element.textContent = `Trial: $${creditsRemaining.toFixed(2)} remaining`;
+
+    // Visual warning when low
+    if (percentage < 20) {
+      element.classList.add('low-credits');
+    }
+  }
+}
+```
+
+**5. Paywall dialog**
 ```typescript
 // src/dialogs/paywall-dialog.ts
 export class PaywallDialog {
   static async show() {
     const result = await showDialog({
-      title: 'Trial Limit Reached',
-      message: `You've used all 500 free messages.
-                Upgrade to continue using Sitegeist.`,
+      title: 'Trial Credits Exhausted',
+      message: `You've used your $1.00 trial credits.
+                Upgrade to continue using Sitegeist with your own API keys.`,
       buttons: [
         { label: 'Upgrade ($9/month)', value: 'upgrade' },
         { label: 'Not Now', value: 'cancel' }
@@ -1311,18 +1712,53 @@ SELECT plan, COUNT(*)
 FROM subscriptions
 GROUP BY plan;
 
--- Trial users approaching limit
-SELECT u.email, s.message_count, s.message_limit
+-- Trial users with low credits (< $0.20 remaining)
+SELECT u.email,
+       s.token_credits_remaining,
+       s.total_tokens_used,
+       s.total_cost_usd,
+       s.trial_started_at
 FROM users u
 JOIN subscriptions s ON u.id = s.user_id
 WHERE s.plan = 'trial'
-  AND s.message_count > 450
-ORDER BY s.message_count DESC;
+  AND s.token_credits_remaining < 0.20
+ORDER BY s.token_credits_remaining ASC;
 
--- Revenue (requires Stripe API or manual tracking)
-SELECT COUNT(*) as paid_users
+-- Trial usage statistics
+SELECT
+  AVG(total_cost_usd) as avg_trial_cost,
+  AVG(total_tokens_used) as avg_tokens_used,
+  MAX(total_cost_usd) as max_trial_cost,
+  COUNT(*) as total_trials
+FROM subscriptions
+WHERE plan IN ('trial', 'expired');
+
+-- Conversion rate
+SELECT
+  COUNT(CASE WHEN plan = 'paid' THEN 1 END) as paid_users,
+  COUNT(CASE WHEN plan IN ('trial', 'expired') THEN 1 END) as trial_users,
+  ROUND(
+    COUNT(CASE WHEN plan = 'paid' THEN 1 END)::numeric /
+    NULLIF(COUNT(*), 0) * 100,
+    2
+  ) as conversion_rate_pct
+FROM subscriptions;
+
+-- Revenue (active paid subscriptions)
+SELECT COUNT(*) as paid_users,
+       COUNT(*) * 9 as monthly_revenue_usd
 FROM subscriptions
 WHERE plan = 'paid' AND subscription_status = 'active';
+
+-- Daily trial costs
+SELECT
+  DATE(trial_started_at) as date,
+  COUNT(*) as new_trials,
+  COUNT(*) * 1.00 as trial_cost_usd
+FROM subscriptions
+WHERE trial_started_at > NOW() - INTERVAL '30 days'
+GROUP BY DATE(trial_started_at)
+ORDER BY date DESC;
 ```
 
 ---
@@ -1405,22 +1841,75 @@ SSL Certificate:
 ```
 
 ### Break-Even Analysis
+
+**Cost Per Trial User**:
+```
+Trial credit provided:   $1.00 (Anthropic API costs)
+Email verification:      $0.001 (AWS SES)
+---------------------------------
+Total cost per trial:    $1.001
+
+Assumption: 10% conversion rate (trial → paid)
+Cost to acquire 1 paid user: $1.001 × 10 = $10.01
+```
+
+**Monthly Revenue Per Paid User**:
 ```
 Assumptions:
 - Subscription: $9/month
 - Stripe fees: 2.9% + $0.30 = $0.56 per transaction
 - Email: $0.10 per user/month (AWS SES)
+- AI costs: $0 (users provide own API keys post-payment)
 
 Revenue per user:    $9.00
 Stripe fees:         -$0.56
 Email costs:         -$0.10
 ---------------------------------
 Net per user:        $8.34/month
+```
 
-Break-even:          2 paid users ($16.68/month > $15 SendGrid)
+**Payback Period & Profitability**:
+```
+Acquisition cost:     $10.01 (one-time)
+Monthly profit:       $8.34
 
-With 100 paid users: $834/month revenue
-With 1000 paid users: $8,340/month revenue
+Payback period:       $10.01 / $8.34 = 1.2 months
+Lifetime value (12mo): $8.34 × 12 = $100.08
+
+Profit after 1 year:  $100.08 - $10.01 = $90.07 per user
+```
+
+**Break-Even with Fixed Costs**:
+```
+Fixed costs:         $15/month (SendGrid email service)
+Monthly profit:      $8.34 per paid user
+
+Break-even:          2 paid users ($16.68/month > $15)
+
+With 100 paid users:  $834/month - $15 = $819/month profit
+With 1000 paid users: $8,340/month - $15 = $8,325/month profit
+```
+
+**Trial User Cost Scenarios**:
+```
+Scenario 1: 1,000 trials/month, 10% conversion
+- Trial costs: 1,000 × $1.00 = $1,000
+- Paid users: 100
+- Monthly revenue: 100 × $8.34 = $834
+- Net: $834 - $1,000 = -$166 (loss in first month)
+- Month 2+ (assuming no new trials): $834/month profit
+- Break-even: Month 1.2
+
+Scenario 2: 10,000 trials/month, 10% conversion
+- Trial costs: 10,000 × $1.00 = $10,000
+- Paid users: 1,000
+- Monthly revenue: 1,000 × $8.34 = $8,340
+- Net: $8,340 - $10,000 = -$1,660 (loss in first month)
+- Month 2+: $8,340/month profit
+- Break-even: Month 1.2
+
+Key insight: Trial costs are one-time per user, subscription revenue is recurring.
+After payback period, each user generates $8.34/month profit indefinitely.
 ```
 
 ---
@@ -1439,15 +1928,42 @@ With 1000 paid users: $8,340/month revenue
 - Impact: High (lost revenue)
 - Mitigation: Webhook logging + manual reconciliation script
 
-**3. Race Conditions in Message Counting**
+**3. Race Conditions in Credit Deduction**
 - Risk: Low (PostgreSQL ACID guarantees)
-- Impact: Medium (incorrect limits)
-- Mitigation: Use atomic SQL updates (already in design)
+- Impact: Medium (incorrect balances, users get free credits)
+- Mitigation: Use atomic SQL updates with CHECK constraint (already in design)
 
-**4. Server Downtime**
+**4. AI Proxy API Key Exposure**
+- Risk: Medium
+- Impact: Critical (API key theft = unlimited usage on your account)
+- Mitigation:
+  - Store keys in Docker secrets (not environment variables)
+  - Rate limiting per user (100 req/min)
+  - Monitor Anthropic usage dashboard for anomalies
+  - Rotate keys if compromised
+
+**5. Trial Credit Abuse**
+- Risk: High (users create multiple accounts for free credits)
+- Impact: Medium ($1 per abuser, but can add up)
+- Mitigation:
+  - Email verification required
+  - Rate limit signups per IP (3 per hour)
+  - Monitor for patterns (same payment method, device fingerprinting)
+  - Consider captcha for signup
+
+**6. Anthropic API Downtime**
+- Risk: Low (Anthropic SLA: 99.9%)
+- Impact: High (trial users can't use extension at all)
+- Mitigation:
+  - Graceful error handling in extension
+  - Show clear error message
+  - Don't deduct credits on failed requests
+  - Consider fallback to direct BYOK mode
+
+**7. Server Downtime**
 - Risk: Low (97+ day uptime)
-- Impact: High (can't verify subscriptions)
-- Mitigation: Health checks + monitoring
+- Impact: High (can't verify subscriptions OR proxy AI requests)
+- Mitigation: Health checks + monitoring + redundancy planning
 
 ### Business Risks
 
@@ -1458,14 +1974,24 @@ With 1000 paid users: $8,340/month revenue
   - Clear messaging in paywall
   - Email reminders for abandoned checkouts
   - Simple re-entry flow
+  - Show value prop: "After payment, use your own API keys (no usage limits)"
 
-**2. Trial Abuse**
-- Risk: Medium (users create multiple accounts)
-- Impact: Low (still using own API keys)
+**2. Trial Costs Exceeding Revenue**
+- Risk: Medium (if conversion rate is very low)
+- Impact: High (negative cash flow)
 - Mitigation:
-  - Email verification required
-  - Rate limit signups per IP
-  - Device fingerprinting (future)
+  - Monitor conversion rate closely
+  - Target: 10% conversion minimum
+  - If <5% conversion after 1000 trials, re-evaluate trial amount or model
+  - Payback period is only 1.2 months, so sustainable with normal churn
+
+**3. High Trial Usage (Power Users)**
+- Risk: Medium (users maximize their $1 credit)
+- Impact: Low ($1 is capped cost per user)
+- Mitigation:
+  - Monitor for outlier usage patterns
+  - Rate limiting prevents abuse (100 req/min)
+  - Max $1 loss per trial user regardless of usage
 
 ---
 
@@ -1486,14 +2012,39 @@ With 1000 paid users: $8,340/month revenue
 
 ## Questions for Review
 
-1. **Payment Provider:** Stripe (most popular) vs Paddle (EU-friendly, higher fees)?
-2. **Email Service:** AWS SES (cheapest) vs SendGrid (simpler) vs Mailgun?
-3. **Trial Limit:** 500 messages sufficient? Too generous/stingy?
-4. **Pricing:** $5-10/month - what's the target price?
-5. **Subscription Model:** Monthly only, or also offer annual discount?
-6. **Grace Period:** Allow users to finish current session after limit? (Currently yes)
-7. **Data Retention:** Keep expired trial users in database? For how long?
-8. **GDPR:** Need user data export/deletion endpoints? (Probably yes for EU)
+### Trial & Credits
+1. **Trial Amount:** Is $1.00 the right amount? (Provides ~300-2,500 requests with Haiku)
+2. **Trial Abuse:** How to prevent users from creating multiple accounts to get more free credits?
+   - Email verification already in place
+   - Consider: IP-based rate limiting on signups
+   - Consider: Device fingerprinting (more complex)
+3. **Credit Display:** Show remaining credits in extension UI? Just balance or usage history?
+4. **Grace Period:** Allow users to finish current session after credits exhausted? (Currently yes if session started)
+
+### Payments & Pricing
+5. **Payment Provider:** Stripe (most popular) vs Paddle (EU-friendly, higher fees)?
+6. **Pricing:** $5-10/month - what's the target price?
+   - Note: After payment, users use their own API keys (BYOK) - no ongoing AI costs
+7. **Subscription Model:** Monthly only, or also offer annual discount?
+
+### Technical
+8. **Email Service:** AWS SES (cheapest) vs SendGrid (simpler) vs Mailgun?
+9. **AI Model Choice:** Haiku only for trial, or allow users to choose? (Sonnet is 12x more expensive)
+10. **Rate Limiting:** 100 requests/minute per user - is this sufficient?
+11. **Max Token Limits:** 4096 max_tokens per request - adjust this?
+
+### Legal & Privacy
+12. **Data Retention:** Keep expired trial users in database? For how long?
+13. **GDPR:** Need user data export/deletion endpoints? (Probably yes for EU)
+14. **Terms of Service:** Trial users agree that Sitegeist proxies their requests through Anthropic?
+15. **Privacy Policy:** Clarify that message content is never stored, only aggregate token counts
+
+### Business
+16. **Conversion Strategy:** What happens when trial expires?
+   - Current: Hard paywall, can't create new sessions
+   - Alternative: Allow BYOK immediately without payment?
+17. **Trial Reset:** Can users who expired trial get more credits? (Probably no)
+18. **Refunds:** Stripe subscription refund policy?
 
 ---
 
