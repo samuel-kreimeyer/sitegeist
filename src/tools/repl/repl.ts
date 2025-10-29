@@ -31,6 +31,26 @@ export async function executeJavaScript(
 		throw new Error("Code parameter is required");
 	}
 
+	// Check for restricted navigation patterns in code
+	const restrictedPatterns = [
+		/window\.location\.href\s*=/i,
+		/window\.location\.assign/i,
+		/window\.location\.replace/i,
+		/window\.location\s*=/i,
+		/location\.href\s*=/i,
+		/location\.assign/i,
+		/location\.replace/i,
+		/location\s*=\s*['"`]/i,
+	];
+
+	for (const pattern of restrictedPatterns) {
+		if (pattern.test(code)) {
+			throw new Error(
+				"Direct navigation via window.location is not allowed. Use the navigate() function in browserjs() code, or use the navigate tool instead.",
+			);
+		}
+	}
+
 	// Check for abort before starting
 	if (signal?.aborted) {
 		throw new Error("Execution aborted");
