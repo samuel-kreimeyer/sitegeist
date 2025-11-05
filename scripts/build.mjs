@@ -40,9 +40,12 @@ const buildOptions = {
 	define: {
 		"process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV ?? (isWatch ? "development" : "production")),
 		"process.env.TARGET_BROWSER": JSON.stringify(targetBrowser),
+		global: "globalThis",
 	},
+	inject: [join(packageRoot, "scripts/process-shim.js")],
 	// Force all mini-lit and lit imports to resolve to sitegeist's node_modules
 	alias: {
+		process: join(packageRoot, "scripts/process-shim.js"),
 		"@mariozechner/mini-lit": join(packageRoot, "node_modules/@mariozechner/mini-lit"),
 		lit: join(packageRoot, "node_modules/lit"),
 		"lit/decorators.js": join(packageRoot, "node_modules/lit/decorators.js"),
