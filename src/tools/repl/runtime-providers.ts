@@ -19,6 +19,15 @@ import { buildWrapperCode, checkUserScriptsAvailability } from "./userscripts-he
  */
 export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 	private activeSandboxIds: Set<string> = new Set();
+	private activeExecutions = new Map<
+		string,
+		{
+			tabId: number;
+			executionId: string;
+			abortSignal?: AbortSignal;
+		}
+	>();
+	private sandboxAbortSignals = new Map<string, AbortSignal>();
 
 	constructor(private sharedProviders: SandboxRuntimeProvider[]) {}
 
@@ -73,12 +82,27 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 		};
 	}
 
+	onExecutionStart(sandboxId: string, signal?: AbortSignal): void {
+		if (signal) {
+			this.sandboxAbortSignals.set(sandboxId, signal);
+		}
+	}
+
+	onExecutionEnd(sandboxId: string): void {
+		// Clean up the abort signal when REPL execution ends
+		this.sandboxAbortSignals.delete(sandboxId);
+	}
+
 	async handleMessage(message: any, respond: (response: any) => void): Promise<void> {
 		if (message.type !== "browser-js") {
 			return;
 		}
 
 		console.log("[BrowserJsRuntimeProvider] Received message:", message);
+
+		// Get the REPL sandbox's abort signal (if available)
+		const replSandboxId = message.sandboxId;
+		const abortSignal = replSandboxId ? this.sandboxAbortSignals.get(replSandboxId) : undefined;
 
 		// Check if userScripts API is available
 		const apiCheck = await checkUserScriptsAvailability();
@@ -165,6 +189,40 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 		// Use fixed worldId for all executions
 		const FIXED_WORLD_ID = "sitegeist-browser-script";
 
+		// Check if terminate API is available (Chrome 138+)
+		// @ts-expect-error - terminate is not yet in the type definitions
+		const supportsTerminate = typeof chrome.userScripts?.terminate === "function";
+
+		// Generate execution ID for cancellation support (only if terminate is available)
+		const executionId = supportsTerminate ? crypto.randomUUID() : undefined;
+
+		// Track this execution for potential cancellation
+		if (executionId) {
+			this.activeExecutions.set(sandboxId, {
+				tabId: tab.id,
+				executionId: executionId,
+				abortSignal: abortSignal,
+			});
+		}
+
+		// Set up abort handler if signal is available and terminate is supported
+		const abortHandler = executionId
+			? async () => {
+					console.log(`[BrowserJsRuntimeProvider] Aborting execution ${executionId}`);
+					try {
+						// @ts-expect-error - terminate is not yet in the type definitions
+						await chrome.userScripts.terminate(tab.id!, executionId);
+						console.log(`[BrowserJsRuntimeProvider] Successfully terminated execution ${executionId}`);
+					} catch (e) {
+						console.error(`[BrowserJsRuntimeProvider] Failed to terminate execution:`, e);
+					}
+				}
+			: undefined;
+
+		if (abortSignal && abortHandler) {
+			abortSignal.addEventListener("abort", abortHandler);
+		}
+
 		try {
 			// Execute via userScripts API
 			if (chrome.userScripts && typeof chrome.userScripts.execute === "function") {
@@ -179,13 +237,20 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 					console.warn("[BrowserJsRuntimeProvider] Failed to configure userScripts world:", e);
 				}
 
-				const results = await chrome.userScripts.execute({
+				const injectionConfig: any = {
 					js: [{ code: wrapperCode }],
 					target: { tabId: tab.id, allFrames: false },
 					world: "USER_SCRIPT",
 					worldId: FIXED_WORLD_ID,
 					injectImmediately: true,
-				});
+				};
+
+				// Only add executionId if terminate API is available
+				if (executionId) {
+					injectionConfig.executionId = executionId;
+				}
+
+				const results = await chrome.userScripts.execute(injectionConfig);
 
 				const result = results[0]?.result as
 					| {
@@ -232,11 +297,26 @@ export class BrowserJsRuntimeProvider implements SandboxRuntimeProvider {
 			}
 		} catch (error: any) {
 			console.error("[BrowserJsRuntimeProvider] Error:", error);
+
+			// Check if this was a cancellation
+			const wasCancelled = abortSignal?.aborted;
+
 			respond({
 				success: false,
-				error: error.message || String(error),
+				error: wasCancelled ? "Script execution was cancelled" : error.message || String(error),
+				cancelled: wasCancelled,
 			});
 		} finally {
+			// Cleanup abort handler
+			if (abortSignal && abortHandler) {
+				abortSignal.removeEventListener("abort", abortHandler);
+			}
+
+			// Cleanup execution tracking
+			if (executionId) {
+				this.activeExecutions.delete(sandboxId);
+			}
+
 			// Cleanup sandbox registration
 			this.cleanup(sandboxId);
 		}
