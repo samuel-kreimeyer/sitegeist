@@ -67,6 +67,26 @@ npm run build
 
 When running `npm run dev`, the extension will automatically reload when you make changes to the source files. The WebSocket server on port 8765 coordinates this.
 
+### Publishing
+
+To publish a new version to sitegeist.ai:
+
+1. Update the version in `static/manifest.chrome.json`
+2. Commit and push your changes
+3. Run the publish script:
+
+```bash
+./publish.sh
+```
+
+This will:
+- Build pi-mono and sitegeist
+- Create a zip archive of the extension (without source maps)
+- Generate `version.json` from the manifest
+- Upload `sitegeist-latest.zip` and `version.json` to `sitegeist.ai/uploads/`
+
+**Note:** Requires SSH access to `slayer.marioslab.io`.
+
 ## Project Structure
 
 ```
