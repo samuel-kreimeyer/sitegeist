@@ -1,0 +1,3 @@
+- Always run ./check.sh after you made changes
+- Never commit unless the user instructed you to
+- Never run npm run build or any of the variants. The user is running ./dev.sh in a separate process which continuously rebuilds
