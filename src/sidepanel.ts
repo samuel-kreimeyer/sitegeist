@@ -718,6 +718,19 @@ async function testSteps(): Promise<boolean> {
 // ============================================================================
 // UPDATE CHECK
 // ============================================================================
+function isNewerVersion(latest: string, current: string): boolean {
+	const latestParts = latest.split(".").map(Number);
+	const currentParts = current.split(".").map(Number);
+
+	for (let i = 0; i < Math.max(latestParts.length, currentParts.length); i++) {
+		const l = latestParts[i] || 0;
+		const c = currentParts[i] || 0;
+		if (l > c) return true;
+		if (l < c) return false;
+	}
+	return false;
+}
+
 async function checkForUpdates() {
 	try {
 		const currentVersion = chrome.runtime.getManifest().version;
@@ -729,8 +742,8 @@ async function checkForUpdates() {
 		const data = await response.json();
 		const latestVersion = data.version;
 
-		// Show dialog if server version is newer
-		if (latestVersion !== currentVersion) {
+		// Show dialog only if server version is newer than current version
+		if (isNewerVersion(latestVersion, currentVersion)) {
 			// Show update dialog - blocks until extension is updated and restarted
 			await UpdateNotificationDialog.show(latestVersion);
 		}
