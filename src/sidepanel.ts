@@ -12,6 +12,7 @@ import {
 import { getModel, type Model } from "@mariozechner/pi-ai";
 import {
 	ChatPanel,
+	type CustomProvider,
 	createExtractDocumentTool,
 	createStreamFn,
 	ModelSelector,
@@ -97,7 +98,6 @@ const shownSkills = new Map<string, string>();
 // Track which messages we've already recorded costs for (avoid duplicates)
 // Use Set with message object identity (not cleared on session switch - persists in memory)
 const recordedCostMessages = new Set<AgentMessage>();
-
 
 // Export getter for message transformer
 export function getShownSkills(): Map<string, string> {
@@ -222,6 +222,45 @@ const updateUrl = (sessionId: string) => {
 	window.history.replaceState({}, "", url);
 };
 
+// ============================================================================
+// OLLAMA HELPERS
+// ============================================================================
+
+/**
+ * Build a fully-typed Model object for an Ollama model.
+ * Uses the OpenAI-completions API that Ollama exposes at /v1.
+ * contextWindow defaults to 8192 if not overridden.
+ */
+function buildOllamaModel(modelId: string, baseUrl: string, contextWindowOverride = 0): Model<"openai-completions"> {
+	const contextWindow = contextWindowOverride > 0 ? contextWindowOverride : 8192;
+	return {
+		id: modelId,
+		name: modelId,
+		api: "openai-completions",
+		provider: "ollama",
+		baseUrl: `${baseUrl}/v1`,
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow,
+		maxTokens: contextWindow,
+	};
+}
+
+/**
+ * Register (or update) a custom provider entry for Ollama so ModelSelector
+ * can discover and list local models via its auto-discovery flow.
+ */
+async function syncOllamaCustomProvider(baseUrl: string): Promise<void> {
+	const provider: CustomProvider = {
+		id: "ollama-local",
+		name: "ollama",
+		type: "ollama",
+		baseUrl,
+	};
+	await storage.customProviders.set(provider);
+}
+
 const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true) => {
 	if (agentUnsubscribe) {
 		agentUnsubscribe();
@@ -245,32 +284,40 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 	const debuggerModeEnabled = stored.debuggerMode || false;
 
 	// Determine default model from saved settings or first available Ollama model
-	let defaultModel: Model<any> | undefined;
+	let defaultModel: Model<"openai-completions"> | undefined;
 	if (!initialState?.model) {
-		const savedModel = await storage.settings.get<Model<any>>("lastUsedModel");
-		if (savedModel && savedModel.provider === "ollama") {
-			defaultModel = savedModel;
-		} else {
-			const ollamaUrl = (await storage.settings.get<string>("ollama.url")) || "http://localhost:11434";
-			const savedModelId = await storage.settings.get<string>("ollama.model");
-			if (savedModelId) {
-				defaultModel = getModel("ollama" as any, savedModelId) ?? ({ provider: "ollama", id: savedModelId } as Model<any>);
-			} else {
-				// Try to discover a running model from Ollama
-				try {
-					const ollama = new Ollama({ host: ollamaUrl });
-					const { models } = await ollama.list();
-					if (models.length > 0) {
-						const modelId = models[0].name;
-						defaultModel =
-							getModel("ollama" as any, modelId) ?? ({ provider: "ollama", id: modelId } as Model<any>);
-						await storage.settings.set("ollama.model", modelId);
-					}
-				} catch {
-					// Ollama not reachable yet; placeholder so the agent can still be created
-					defaultModel = { provider: "ollama", id: "llama3.2" } as Model<any>;
-				}
+		const ollamaUrl = (await storage.settings.get<string>("ollama.url")) || "http://localhost:11434";
+		const contextLength = (await storage.settings.get<number>("ollama.contextLength")) || 0;
+
+		// Prefer the explicitly saved model id
+		let targetModelId = await storage.settings.get<string>("ollama.model");
+
+		// If no saved model id, try to fall back to the last-used model (same session restore)
+		if (!targetModelId) {
+			const savedModel = await storage.settings.get<Model<any>>("lastUsedModel");
+			if (savedModel && savedModel.provider === "ollama") {
+				targetModelId = savedModel.id;
 			}
+		}
+
+		// Build a proper Model object from live Ollama data when possible
+		try {
+			const ollamaClient = new Ollama({ host: ollamaUrl });
+			const { models } = await ollamaClient.list();
+
+			if (models.length > 0) {
+				// Pick saved model if available, otherwise first returned model
+				const picked = models.find((m) => m.name === targetModelId) ?? models[0];
+				if (!targetModelId) {
+					await storage.settings.set("ollama.model", picked.name);
+				}
+				defaultModel = buildOllamaModel(picked.name, ollamaUrl, contextLength);
+			}
+		} catch {
+			// Ollama not reachable yet — create a placeholder so the agent can still be initialised.
+			// The user will see an error when they actually try to send a message.
+			const modelId = targetModelId || "llama3.2";
+			defaultModel = buildOllamaModel(modelId, ollamaUrl, contextLength);
 		}
 	}
 
@@ -349,11 +396,16 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			return true;
 		},
 		onModelSelect: async () => {
-			// Use pi-ai ModelSelector scoped to the ollama provider
+			// ModelSelector discovers Ollama models via the CustomProvidersStore entry
+			// registered at startup, then filters to only show the "ollama" provider.
 			ModelSelector.open(
 				agent.state.model,
 				async (model) => {
-					agent.setModel(model);
+					// Apply any stored context-length override to the selected model
+					const contextLength = (await storage.settings.get<number>("ollama.contextLength")) || 0;
+					const ollamaUrl = (await storage.settings.get<string>("ollama.url")) || "http://localhost:11434";
+					const finalModel = contextLength > 0 ? buildOllamaModel(model.id, ollamaUrl, contextLength) : model;
+					agent.setModel(finalModel);
 					await storage.settings.set("ollama.model", model.id);
 					chatPanel.agentInterface?.requestUpdate();
 					renderApp();
@@ -774,6 +826,10 @@ async function initApp() {
 	// Initialize default skills
 	const { initializeDefaultSkills } = await import("./tools/skill.js");
 	await initializeDefaultSkills();
+
+	// Register Ollama as a custom provider so ModelSelector can discover local models
+	const ollamaUrl = (await storage.settings.get<string>("ollama.url")) || "http://localhost:11434";
+	await syncOllamaCustomProvider(ollamaUrl);
 
 	// Create ChatPanel
 	chatPanel = new ChatPanel();

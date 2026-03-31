@@ -1,6 +1,6 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
-import { getAppStorage, SettingsTab } from "@mariozechner/pi-web-ui";
+import { type CustomProvider, getAppStorage, SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { Ollama } from "ollama/browser";
 
@@ -49,6 +49,14 @@ export class OllamaSettingsTab extends SettingsTab {
 	private async saveUrl() {
 		const storage = getAppStorage();
 		await storage.settings.set("ollama.url", this.url);
+		// Keep the CustomProvidersStore entry in sync so ModelSelector discovers models from the new URL
+		const provider: CustomProvider = {
+			id: "ollama-local",
+			name: "ollama",
+			type: "ollama",
+			baseUrl: this.url,
+		};
+		await storage.customProviders.set(provider);
 		await this.refreshModels();
 	}
 
@@ -96,18 +104,21 @@ export class OllamaSettingsTab extends SettingsTab {
 						})}
 					</div>
 					<div class="mt-2 text-xs">
-						${this.status === "connected"
-							? html`<span class="text-green-600 dark:text-green-400">Connected — ${this.models.length} model(s) available</span>`
-							: this.status === "loading"
-								? html`<span class="text-muted-foreground">Connecting...</span>`
-								: this.status === "error"
-									? html`<span class="text-destructive">${this.errorMessage}</span>`
-									: html``}
+						${
+							this.status === "connected"
+								? html`<span class="text-green-600 dark:text-green-400">Connected — ${this.models.length} model(s) available</span>`
+								: this.status === "loading"
+									? html`<span class="text-muted-foreground">Connecting...</span>`
+									: this.status === "error"
+										? html`<span class="text-destructive">${this.errorMessage}</span>`
+										: html``
+						}
 					</div>
 				</div>
 
-				${this.status === "connected" && this.models.length > 0
-					? html`
+				${
+					this.status === "connected" && this.models.length > 0
+						? html`
 						<div>
 							<h3 class="text-sm font-semibold text-foreground mb-2">Model</h3>
 							<div class="flex flex-col gap-2">
@@ -132,28 +143,34 @@ export class OllamaSettingsTab extends SettingsTab {
 						<div>
 							<h3 class="text-sm font-semibold text-foreground mb-1">Context Length</h3>
 							<p class="text-xs text-muted-foreground mb-2">
-								Override the context window size (num_ctx). Set to 0 to use the model default.
+								Maximum tokens sent to the model per request (context window).
+								Set to 0 to use the value reported by Ollama for the model.
+								To change the actual inference context Ollama allocates, set
+								<code class="font-mono">num_ctx</code> in the model's Modelfile.
 							</p>
 							${Input({
 								type: "number",
 								value: String(this.contextLength),
-								placeholder: "0 (model default)",
+								placeholder: "0 (use model default)",
 								onInput: (e: Event) => {
-									const v = Number.parseInt((e.target as HTMLInputElement).value) || 0;
+									const v = Number.parseInt((e.target as HTMLInputElement).value, 10) || 0;
 									this.saveContextLength(v);
 								},
 							})}
 						</div>
 					`
-					: html``}
+						: html``
+				}
 
-				${this.status === "error"
-					? html`
+				${
+					this.status === "error"
+						? html`
 						<div class="p-3 rounded-lg bg-secondary/20 border border-border text-xs text-muted-foreground">
 							Ensure Ollama is running and accessible at the URL above.
 						</div>
 					`
-					: html``}
+						: html``
+				}
 			</div>
 		`;
 	}
