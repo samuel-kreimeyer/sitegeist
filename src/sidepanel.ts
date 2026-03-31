@@ -9,13 +9,13 @@ import {
 	type AgentState,
 	type AgentTool,
 } from "@mariozechner/pi-agent-core";
-import { getModel, getModels, type Model } from "@mariozechner/pi-ai";
+import { getModel, type Model } from "@mariozechner/pi-ai";
 import {
 	ChatPanel,
+	type CustomProvider,
 	createExtractDocumentTool,
 	createStreamFn,
 	ModelSelector,
-	ProxyTab,
 	SettingsDialog,
 	// PersistentStorageDialog,
 	setAppStorage,
@@ -23,16 +23,14 @@ import {
 } from "@mariozechner/pi-web-ui";
 import { html, render } from "lit";
 import { History, Plus, Settings } from "lucide";
+import { Ollama } from "ollama/browser";
 import { AboutTab } from "./dialogs/AboutTab.js";
-import { ApiKeyOrOAuthDialog } from "./dialogs/ApiKeyOrOAuthDialog.js";
-import { ApiKeysOAuthTab } from "./dialogs/ApiKeysOAuthTab.js";
 import { CostsTab } from "./dialogs/CostsTab.js";
+import { OllamaSettingsTab } from "./dialogs/OllamaSettingsTab.js";
 import { SessionCostDialog } from "./dialogs/SessionCostDialog.js";
 import { SitegeistSessionListDialog } from "./dialogs/SessionListDialog.js";
 import { SkillsTab } from "./dialogs/SkillsTab.js";
-import { UpdateNotificationDialog } from "./dialogs/UpdateNotificationDialog.js";
 import { UserScriptsPermissionDialog } from "./dialogs/UserScriptsPermissionDialog.js";
-import { WelcomeSetupDialog } from "./dialogs/WelcomeSetupDialog.js";
 import { browserMessageTransformer } from "./messages/message-transformer.js";
 import {
 	createNavigationMessage,
@@ -41,7 +39,6 @@ import {
 } from "./messages/NavigationMessage.js";
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
-import { isOAuthCredentials, resolveApiKey } from "./oauth/index.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
 import { SitegeistAppStorage } from "./storage/app-storage.js";
 import { DebuggerTool } from "./tools/debugger.js";
@@ -101,107 +98,6 @@ const shownSkills = new Map<string, string>();
 // Track which messages we've already recorded costs for (avoid duplicates)
 // Use Set with message object identity (not cleared on session switch - persists in memory)
 const recordedCostMessages = new Set<AgentMessage>();
-
-// Cached auth type label for the current provider
-let authLabel = "";
-
-const DEFAULT_MODELS: Record<string, string> = {
-	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
-	anthropic: "claude-sonnet-4-6",
-	"azure-openai-responses": "gpt-5.2",
-	cerebras: "zai-glm-4.6",
-	"github-copilot": "gpt-4o",
-	google: "gemini-2.5-flash",
-	"google-antigravity": "gemini-3.1-pro-high",
-	"google-gemini-cli": "gemini-2.5-pro",
-	"google-vertex": "gemini-3-pro-preview",
-	groq: "openai/gpt-oss-20b",
-	huggingface: "moonshotai/Kimi-K2.5",
-	"kimi-coding": "kimi-k2-thinking",
-	minimax: "MiniMax-M2.1",
-	"minimax-cn": "MiniMax-M2.1",
-	mistral: "devstral-medium-latest",
-	openai: "gpt-4o-mini",
-	"openai-codex": "gpt-5.1-codex-mini",
-	opencode: "claude-opus-4-6",
-	"opencode-go": "kimi-k2.5",
-	openrouter: "openai/gpt-5.1-codex",
-	"vercel-ai-gateway": "anthropic/claude-opus-4-6",
-	xai: "grok-4-fast-non-reasoning",
-	zai: "glm-4.6",
-};
-
-async function selectDefaultModelForAvailableProvider() {
-	const providers = await getProvidersWithKeys();
-	if (providers.length === 0 || !agent) return;
-
-	// Try each provider with keys and find a default model
-	for (const provider of providers) {
-		const modelId = DEFAULT_MODELS[provider];
-		if (modelId) {
-			const model = getModel(provider as any, modelId);
-			if (model) {
-				agent.setModel(model);
-				await storage.settings.set("lastUsedModel", model);
-				await updateAuthLabel();
-				renderApp();
-				return;
-			}
-		}
-	}
-
-	// If no default found, try the first model for the first provider with a key
-	for (const provider of providers) {
-		const models = getModels(provider as any);
-		if (models.length > 0) {
-			agent.setModel(models[0]);
-			await storage.settings.set("lastUsedModel", models[0]);
-			await updateAuthLabel();
-			renderApp();
-			return;
-		}
-	}
-}
-
-async function getProvidersWithKeys(): Promise<string[]> {
-	const providers = await storage.providerKeys.list();
-	const result: string[] = [];
-	for (const provider of providers) {
-		const key = await storage.providerKeys.get(provider);
-		if (key) result.push(provider);
-	}
-	return result;
-}
-
-async function hasAnyApiKey(): Promise<boolean> {
-	const providers = await storage.providerKeys.list();
-	return providers.length > 0;
-}
-
-function openApiKeysDialog(): Promise<void> {
-	return new Promise((resolve) => {
-		SettingsDialog.open(
-			[new ApiKeysOAuthTab(), new CostsTab(), new SkillsTab(), new ProxyTab(), new AboutTab()],
-			resolve,
-		);
-	});
-}
-
-async function updateAuthLabel() {
-	if (!agent) {
-		authLabel = "";
-		return;
-	}
-	const provider = agent.state.model.provider;
-	const stored = await storage.providerKeys.get(provider);
-	if (!stored) {
-		authLabel = "";
-	} else if (isOAuthCredentials(stored)) {
-		authLabel = "subscription";
-	} else {
-		authLabel = "api key";
-	}
-}
 
 // Export getter for message transformer
 export function getShownSkills(): Map<string, string> {
@@ -326,6 +222,45 @@ const updateUrl = (sessionId: string) => {
 	window.history.replaceState({}, "", url);
 };
 
+// ============================================================================
+// OLLAMA HELPERS
+// ============================================================================
+
+/**
+ * Build a fully-typed Model object for an Ollama model.
+ * Uses the OpenAI-completions API that Ollama exposes at /v1.
+ * contextWindow defaults to 8192 if not overridden.
+ */
+function buildOllamaModel(modelId: string, baseUrl: string, contextWindowOverride = 0): Model<"openai-completions"> {
+	const contextWindow = contextWindowOverride > 0 ? contextWindowOverride : 8192;
+	return {
+		id: modelId,
+		name: modelId,
+		api: "openai-completions",
+		provider: "ollama",
+		baseUrl: `${baseUrl}/v1`,
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow,
+		maxTokens: contextWindow,
+	};
+}
+
+/**
+ * Register (or update) a custom provider entry for Ollama so ModelSelector
+ * can discover and list local models via its auto-discovery flow.
+ */
+async function syncOllamaCustomProvider(baseUrl: string): Promise<void> {
+	const provider: CustomProvider = {
+		id: "ollama-local",
+		name: "ollama",
+		type: "ollama",
+		baseUrl,
+	};
+	await storage.customProviders.set(provider);
+}
+
 const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true) => {
 	if (agentUnsubscribe) {
 		agentUnsubscribe();
@@ -348,34 +283,42 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 	const stored = await chrome.storage.local.get("debuggerMode");
 	const debuggerModeEnabled = stored.debuggerMode || false;
 
-	// Load CORS proxy settings for extract_document tool
-	const corsProxyEnabled = await storage.settings.get<boolean>("proxy.enabled");
-	const corsProxyUrl = await storage.settings.get<string>("proxy.url");
-
-	// Determine default model: saved > default for a provider with key > gemini flash fallback
-	let defaultModel: Model<any> | undefined;
+	// Determine default model from saved settings or first available Ollama model
+	let defaultModel: Model<"openai-completions"> | undefined;
 	if (!initialState?.model) {
-		const savedModel = await storage.settings.get<Model<any>>("lastUsedModel");
-		if (savedModel) {
-			defaultModel = savedModel;
-		} else {
-			// Try to find a default model for a provider the user already has a key for
-			const providersWithKeys = await getProvidersWithKeys();
-			for (const provider of providersWithKeys) {
-				const modelId = DEFAULT_MODELS[provider];
-				if (modelId) {
-					const model = getModel(provider as any, modelId);
-					if (model) {
-						defaultModel = model;
-						break;
-					}
-				}
+		const ollamaUrl = (await storage.settings.get<string>("ollama.url")) || "http://localhost:11434";
+		const contextLength = (await storage.settings.get<number>("ollama.contextLength")) || 0;
+
+		// Prefer the explicitly saved model id
+		let targetModelId = await storage.settings.get<string>("ollama.model");
+
+		// If no saved model id, try to fall back to the last-used model (same session restore)
+		if (!targetModelId) {
+			const savedModel = await storage.settings.get<Model<any>>("lastUsedModel");
+			if (savedModel && savedModel.provider === "ollama") {
+				targetModelId = savedModel.id;
 			}
 		}
-	}
-	// Final fallback
-	if (!defaultModel && !initialState?.model) {
-		defaultModel = getModel("anthropic", "claude-sonnet-4-6");
+
+		// Build a proper Model object from live Ollama data when possible
+		try {
+			const ollamaClient = new Ollama({ host: ollamaUrl });
+			const { models } = await ollamaClient.list();
+
+			if (models.length > 0) {
+				// Pick saved model if available, otherwise first returned model
+				const picked = models.find((m) => m.name === targetModelId) ?? models[0];
+				if (!targetModelId) {
+					await storage.settings.set("ollama.model", picked.name);
+				}
+				defaultModel = buildOllamaModel(picked.name, ollamaUrl, contextLength);
+			}
+		} catch {
+			// Ollama not reachable yet — create a placeholder so the agent can still be initialised.
+			// The user will see an error when they actually try to send a message.
+			const modelId = targetModelId || "llama3.2";
+			defaultModel = buildOllamaModel(modelId, ollamaUrl, contextLength);
+		}
 	}
 
 	agent = new Agent({
@@ -388,21 +331,11 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		},
 		convertToLlm: browserMessageTransformer,
 		toolExecution: "sequential",
-		streamFn: createStreamFn(async () => {
-			const enabled = await storage.settings.get<boolean>("proxy.enabled");
-			if (!enabled) return undefined;
-			return (await storage.settings.get<string>("proxy.url")) || undefined;
-		}),
-		getApiKey: async (provider: string) => {
-			const stored = await storage.providerKeys.get(provider);
-			if (!stored) return undefined;
-			const proxyEnabled = await storage.settings.get<boolean>("proxy.enabled");
-			const proxyUrl = proxyEnabled ? (await storage.settings.get<string>("proxy.url")) || undefined : undefined;
-			return resolveApiKey(stored, provider, storage.providerKeys, proxyUrl);
-		},
+		// No proxy — Ollama is local
+		streamFn: createStreamFn(async () => undefined),
+		// Ollama does not require an API key
+		getApiKey: async (_provider: string) => undefined,
 	});
-
-	await updateAuthLabel();
 
 	if (shouldSave) {
 		agentUnsubscribe = agent.subscribe((event: AgentEvent) => {
@@ -411,9 +344,6 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			storage.settings
 				.set("lastUsedModel", agent.state.model)
 				.catch((err) => console.error("Failed to save lastUsedModel:", err));
-
-			// Update auth label when model changes
-			updateAuthLabel().catch(() => {});
 
 			if (
 				event.type === "message_end" &&
@@ -461,24 +391,26 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		sandboxUrlProvider: () => {
 			return chrome.runtime.getURL("sandbox.html");
 		},
-		onApiKeyRequired: async (provider: string) => {
-			return await ApiKeyOrOAuthDialog.prompt(provider);
+		onApiKeyRequired: async (_provider: string) => {
+			// Ollama is local — no API key needed
+			return true;
 		},
 		onModelSelect: async () => {
-			const providers = await getProvidersWithKeys();
-			if (providers.length === 0) {
-				openApiKeysDialog();
-				return;
-			}
+			// ModelSelector discovers Ollama models via the CustomProvidersStore entry
+			// registered at startup, then filters to only show the "ollama" provider.
 			ModelSelector.open(
 				agent.state.model,
-				(model) => {
-					agent.setModel(model);
+				async (model) => {
+					// Apply any stored context-length override to the selected model
+					const contextLength = (await storage.settings.get<number>("ollama.contextLength")) || 0;
+					const ollamaUrl = (await storage.settings.get<string>("ollama.url")) || "http://localhost:11434";
+					const finalModel = contextLength > 0 ? buildOllamaModel(model.id, ollamaUrl, contextLength) : model;
+					agent.setModel(finalModel);
+					await storage.settings.set("ollama.model", model.id);
 					chatPanel.agentInterface?.requestUpdate();
-					updateAuthLabel().catch(() => {});
 					renderApp();
 				},
-				providers,
+				["ollama"],
 			);
 		},
 		onBeforeSend: async () => {
@@ -519,11 +451,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			const navigateTool = new NavigateTool();
 			const selectElementTool = new AskUserWhichElementTool();
 
-			// Create extract_document tool with CORS proxy from settings (loaded above)
 			const extractDocumentTool = createExtractDocumentTool();
-			if (corsProxyEnabled && corsProxyUrl) {
-				extractDocumentTool.corsProxyUrl = `${corsProxyUrl}/?url=`;
-			}
 
 			const replTool = createReplTool();
 			replTool.sandboxUrlProvider = () => chrome.runtime.getURL("sandbox.html");
@@ -694,20 +622,14 @@ const renderApp = () => {
 					}
 				</div>
 				<div class="flex items-center gap-1 px-2">
-					${agent ? html`<span class="text-[10px] text-muted-foreground truncate max-w-[120px]" title="${agent.state.model.provider}/${agent.state.model.id}${authLabel ? ` (${authLabel})` : ""}">${agent.state.model.provider}${authLabel ? html` <span class="text-[9px] opacity-70">${authLabel}</span>` : ""}</span>` : ""}
+					${agent ? html`<span class="text-[10px] text-muted-foreground truncate max-w-[120px]" title="${agent.state.model.provider}/${agent.state.model.id}">${agent.state.model.id}</span>` : ""}
 					<theme-toggle></theme-toggle>
 					${Button({
 						variant: "ghost",
 						size: "sm",
 						children: icon(Settings, "sm"),
 						onClick: () =>
-							SettingsDialog.open([
-								new ApiKeysOAuthTab(),
-								new CostsTab(),
-								new SkillsTab(),
-								new ProxyTab(),
-								new AboutTab(),
-							]),
+							SettingsDialog.open([new OllamaSettingsTab(), new CostsTab(), new SkillsTab(), new AboutTab()]),
 						title: "Settings",
 					})}
 				</div>
@@ -863,44 +785,6 @@ async function testSteps(): Promise<boolean> {
 }
 
 // ============================================================================
-// UPDATE CHECK
-// ============================================================================
-function isNewerVersion(latest: string, current: string): boolean {
-	const latestParts = latest.split(".").map(Number);
-	const currentParts = current.split(".").map(Number);
-
-	for (let i = 0; i < Math.max(latestParts.length, currentParts.length); i++) {
-		const l = latestParts[i] || 0;
-		const c = currentParts[i] || 0;
-		if (l > c) return true;
-		if (l < c) return false;
-	}
-	return false;
-}
-
-async function checkForUpdates() {
-	try {
-		const currentVersion = chrome.runtime.getManifest().version;
-
-		// Fetch latest version
-		const response = await fetch("https://sitegeist.ai/uploads/version.json", {
-			cache: "no-cache",
-		});
-		const data = await response.json();
-		const latestVersion = data.version;
-
-		// Show dialog only if server version is newer than current version
-		if (isNewerVersion(latestVersion, currentVersion)) {
-			// Show update dialog - blocks until extension is updated and restarted
-			await UpdateNotificationDialog.show(latestVersion);
-		}
-	} catch (err) {
-		console.warn("[Sidepanel] Failed to check for updates:", err);
-		// Silently fail - don't block startup
-	}
-}
-
-// ============================================================================
 // INIT
 // ============================================================================
 async function initApp() {
@@ -939,15 +823,13 @@ async function initApp() {
 		await UserScriptsPermissionDialog.request();
 	}
 
-	// TODO: re-enable update check when publishing to users
-	// await checkForUpdates();
-
 	// Initialize default skills
 	const { initializeDefaultSkills } = await import("./tools/skill.js");
 	await initializeDefaultSkills();
 
-	// Proxy disabled — CORS is handled locally via declarativeNetRequest rules
-	await storage.settings.set("proxy.enabled", false);
+	// Register Ollama as a custom provider so ModelSelector can discover local models
+	const ollamaUrl = (await storage.settings.get<string>("ollama.url")) || "http://localhost:11434";
+	await syncOllamaCustomProvider(ollamaUrl);
 
 	// Create ChatPanel
 	chatPanel = new ChatPanel();
@@ -1034,14 +916,6 @@ async function initApp() {
 	}
 
 	renderApp();
-
-	// If no API keys configured, show welcome dialog, open settings, then auto-select model
-	if (!(await hasAnyApiKey())) {
-		await WelcomeSetupDialog.show();
-		await openApiKeysDialog();
-		await selectDefaultModelForAvailableProvider();
-		renderApp();
-	}
 }
 
 // Register custom user message renderer early, before any session loads

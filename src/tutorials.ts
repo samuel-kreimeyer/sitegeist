@@ -72,22 +72,20 @@ Explain the UI elements:
 - New session icon → Start fresh
 - Session title field → Click to rename the current session
 - Theme toggle → Switch between system/light/dark theme
-- Settings icon → Configure API keys, skills, proxy settings
+- Settings icon → Configure Ollama connection, model, context length, skills
 
 **Message Editor (bottom):**
 - Attachment icon → Attach files to chat
-- Thinking settings (if model supports it) → Off/minimal/low/medium/high. When on, I think before acting, which improves results but takes longer and costs more
-- Model selector → Pick different AI models. If you have Ollama running locally (https://ollama.com), you can select from your local models, so everything is truly local
+- Thinking settings (if model supports it) → Off/minimal/low/medium/high. When on, I think before acting, which improves results but takes longer
+- Model selector → Pick from the models available in your local Ollama instance
 - Submit/Stop button → Send message or stop me (can also press ESCAPE key while focused on this sidepanel)
 
 STOP.
 
 **Data Privacy:**
 Explain where data is stored and who gets what:
-- **Settings & API keys**: Stored locally on your computer only
-- **Sessions & attachments**: Stored locally on your computer only
-- **When you send messages**: All text and attachments in the chat session are sent to the LLM provider (default: Anthropic). They're configured to not retain your data or use it for training
-- **CORS proxy** (on by default): If enabled in settings, requests to the LLM go through the proxy due to CORS restrictions when using an Anthropic OAuth token, or using Z-AI. Default is https://proxy.mariozechner.at/proxy which does not retain or log data. Use your own proxy or a service like corsproxy.io if preferred
+- **Settings & sessions**: Stored locally on your computer only
+- **When you send messages**: All text and attachments are processed by the local Ollama model running on your machine. Nothing leaves your computer.
 
 STOP.
 
